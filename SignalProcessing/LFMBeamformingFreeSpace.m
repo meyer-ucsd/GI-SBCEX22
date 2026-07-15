@@ -8,8 +8,8 @@ scenario.soundSpeed = 1500;                   % in m/s
 scenario.samplingFrequency = 25000;           % in Hz
 scenario.snrDb = 0;                           % per-receiver in-band SNR in dB
 
-scenario.sourceHorizontalRange = 2000;         % in meters
-scenario.sourceDepth = 20;                    % in meters
+scenario.sourceHorizontalRange = 2000;        % in meters
+scenario.sourceDepth = 120;                    % in meters
 scenario.sourcePressureAtOneMeter = 1;        % arbitrary pressure unit
 
 scenario.bandLFM = [1500;4500];               % start and stop frequencies in Hz
@@ -53,12 +53,6 @@ receiverSpacings = diff(sort(scenario.receiverDepths));
 maximumReceiverSpacing = max(receiverSpacings);
 fraunhoferDistance = 2*arrayAperture^2/lambdaMinimum;
 
-if maximumReceiverSpacing > maximumAliasFreeSpacing
-    warning(['The maximum receiver spacing is %.3f m, but the full-sector alias-free limit ' ...
-        'at %.1f Hz is %.3f m. Grating lobes are expected.'], ...
-        maximumReceiverSpacing,scenario.bandLFM(2),maximumAliasFreeSpacing)
-end
-
 %% Generate Free-Space Source Waveform
 
 sourceTime = (0:1/scenario.samplingFrequency: ...
@@ -84,17 +78,6 @@ maximumPathLengthError = max(abs(exactPathLengths-farFieldPathLengths));
 maximumPhaseErrorDegrees = 360*scenario.bandLFM(2)* ...
     maximumPathLengthError/scenario.soundSpeed;
 sourceAmplitude = scenario.sourcePressureAtOneMeter/sourceRange;
-
-if sourceRange < fraunhoferDistance
-    warning(['The source range is %.1f m, below the conservative far-field distance ' ...
-        'of %.1f m. Increase sourceHorizontalRange or reduce the VLA aperture.'], ...
-        sourceRange,fraunhoferDistance)
-end
-if maximumPhaseErrorDegrees > 22.5
-    warning(['The plane-wave approximation produces %.1f degrees of phase error ' ...
-        'at %.1f Hz across the VLA.'], ...
-        maximumPhaseErrorDegrees,scenario.bandLFM(2))
-end
 
 fprintf('\nFree-space far-field LFM simulation\n')
 fprintf('  Source range at array center: %.3f m\n',sourceRange)
