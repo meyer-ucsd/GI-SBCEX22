@@ -49,10 +49,10 @@ scenario.coupling = zeros(0,2);
 
 %% load data
 
-dataFolder = pwd;
+dataFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','acoustic');
 scenario.fileName = 'RAVA01.22147212000.sio';      % JD 147, 2120Z
 scenario.windowStart = 0;                          % start of the averaging window [s] since file start
-scenario.windowDuration = 10;                      % averaging window [s], as in the MFP
+scenario.windowDuration = 10;                      % averaging window [s] (MFP.m uses 5 s; for the GI the two are equivalent)
 
 data.samplingFrequency = 25000;
 data.fftLength = 2^14;

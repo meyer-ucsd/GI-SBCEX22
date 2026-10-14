@@ -2,24 +2,37 @@
 % Bartlett MFP of the five M71 tonals recorded on MPL VLA1 (200 m contour)
 % during source tow Track 8 (JD 147, 1929Z-0000Z). The cross-spectral matrix
 % is estimated over short windows, so that the source moves little within an
-% estimate, and the processor steps through the whole file.
+% estimate, and the processor steps through all files. The MFP peaks are
+% compared with the source position derived from the ship's GPS.
+% Based on the original MFP code by Yongsung Park (Matlab/MFP).
 
 clear variables; close all; clc;
 
 %% 1. Parameters
 
-% data: SIO file with 16 channels, channel 1 = hydrophone 1 (deepest)
-dataFolder = pwd;
-fileName = 'RAVA01.22147212000.sio';
+% data: 60 s SIO files with 16 channels, channel 1 = hydrophone 1 (deepest).
+% The JD 147 files are from source tow Track 8 (tonals); the JD 148 files in
+% the same folder are from Track 9 (LFM chirps) and contain no tonals.
+dataFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','acoustic');
+processedFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','processed');
+fileNames = {'RAVA01.22147193000.sio';'RAVA01.22147203000.sio';'RAVA01.22147210000.sio'; ...
+    'RAVA01.22147211000.sio';'RAVA01.22147212000.sio';'RAVA01.22147213000.sio'};
 fs = 25000;                                   % sampling frequency [Hz]
 
-% tonals and spectral analysis
+% tonals and spectral analysis; 5 s windows (15 snapshots, source motion ~6 m)
+% localize as reliably as 10 s windows at twice the time resolution, whereas
+% 3 s windows (8 snapshots) give poorly estimated cross-spectral matrices and
+% 20 s windows smear the moving source
 toneFrequencies = [503;653;803;1003;1253];    % M71 tonals [Hz]
 toneSearchHalfWidth = 3;                      % search for the Doppler-shifted tonal [Hz]
 fftLength = 2^14;                             % 0.66 s snapshots, 1.53 Hz bins (rectangular window)
 hopLength = fftLength/2;
-averagingDuration = 10;                       % cross-spectral matrix averaging time [s]
-displayWindowIndex = 1;                       % averaging window shown in Figure 1
+averagingDuration = 5;                        % cross-spectral matrix averaging time [s]
+displayFileIndex = 5;                         % file shown in Figure 1 (JD 147, 2120Z)
+displayWindowIndex = 1;                       % averaging window of that file shown in Figure 1
+
+% figures are saved here
+resultsFolder = fullfile(fileparts(mfilename('fullpath')),'Results');
 
 % VLA geometry (trip report, App. B.3 and Fig. B.3.3)
 waterDepth = 200;                             % nominal water depth at VLA1 [m]
@@ -28,10 +41,14 @@ hydrophoneSpacing = 3.75;                     % [m]
 numHydrophones = 16;
 arrayTilt = 0;                                % [deg], positive tilt leans the array away from the source
 
-% sound speed profile; CTD #20 was cast on JD 148 at 1828Z, about 21 hours
-% after this file. CTD #18 (JD 147, 1812Z) or XBT #11 (JD 147, 2133Z) are
-% closer in time and should replace it once available.
-sspFile = 'SBCEXP22_ssp_ctd020.mat';
+% sound speed profile: XBT #11 (JD 147, 2133Z, launched during the tow 3.4 km
+% east of VLA1) with the salinity of CTD #16 (JD 147, 1312Z, at VLA1). Of all CTD
+% and XBT casts along the 200 m contour it matches the data best at the source
+% position (tuneSoundSpeedMFP.m); the earlier profile, CTD #20, was cast a day
+% later at the west end of the track, where there is no cold pool.
+sspCastType = 'XBT';
+sspCastNumber = 11;
+salinityCtdNumber = 16;
 
 % seabed based on shelf-break sediment cores AC-18 to AC-23 (Ballard et al.,
 % 2024, Fig. 13); the sediment thickness is an example value
@@ -42,6 +59,17 @@ sediment.attenuations = [0.30;0.55];          % top and bottom [dB/(m kHz)]
 halfspace.speed = 1650;                       % sandy shelf-break sediment [m/s]
 halfspace.density = 1.85;                     % [g/cm^3]
 halfspace.attenuation = 0.65;                 % [dB/(m kHz)]
+
+% source position: VLA1 position (trip report, Table 2), ship track from the
+% GPS positions at the XBT launches during the tow (App. D), layback estimated
+% by tuneSoundSpeedMFP.m, and nominal tow depth (App. F)
+vlaLatitude = 40.048467;                      % [deg]
+vlaLongitude = -70.884167;                    % [deg]
+trackXbtNumbers = (9:11)';                    % JD 147 1932Z, 2033Z, 2133Z
+layback = 180;                                % source behind the ship along the track [m]
+towDepth = 120;                               % [m]
+towDepthBand = [100,140];                     % depths searched for the source [m]
+positionTolerance = 50;                       % ranges searched around the GPS range [m]
 
 % search grid
 searchRanges = (500:10:6000)';                % [m]
@@ -72,206 +100,203 @@ hydrophoneDepths = waterDepth - hydrophone1HeightAboveBottom - hydrophoneHeights
 hydrophoneOffsets = hydrophoneHeights*sind(arrayTilt);           % added to the source range
 modeDepths = unique(round([hydrophoneDepths;searchDepths],3));
 
-% downcast of the CTD; the shallowest and deepest measured values are held
-% constant instead of extrapolated
-ssp = load(sspFile);
-[~,deepestIndex] = max(ssp.ctd_Depth);
-[sspDepthsMeasured,uniqueIndexes] = unique(ssp.ctd_Depth(1:deepestIndex));
-sspSpeedsMeasured = ssp.ctd_ssp(uniqueIndexes);
-sspDepths = linspace(0,waterDepth,500)';
-sspSpeeds = interp1(sspDepthsMeasured(:),sspSpeedsMeasured(:),sspDepths,'pchip',nan);
-sspSpeeds(sspDepths < sspDepthsMeasured(1)) = sspSpeedsMeasured(1);
-sspSpeeds(sspDepths > sspDepthsMeasured(end)) = sspSpeedsMeasured(end);
+% 1 m depth bins; above the shallowest and below the deepest sample the
+% profile is held constant
+sspDepths = (0:1:waterDepth)';
+[~,salinityCast] = readSoundSpeedCastMFP(processedFolder,'CTD',salinityCtdNumber,sspDepths);
+sspSpeeds = readSoundSpeedCastMFP(processedFolder,sspCastType,sspCastNumber,sspDepths,salinityCast.salinity);
 
 
-%% 4. Tonal Snapshots
-
-data = sioread(fullfile(dataFolder,fileName),1,0,1:numHydrophones);
-data = data - mean(data,1);
+%% 4. Replica Fields
 
 numTones = numel(toneFrequencies);
-numFrames = floor((size(data,1)-fftLength)/hopLength) + 1;
-frameTimes = ((0:numFrames-1)'*hopLength + fftLength/2)/fs;
-binFrequencies = (0:fftLength-1)'*fs/fftLength;
-
-% DFT bins within the search band of each tonal for every frame and hydrophone
-candidateBins = cell(numTones,1);
-toneSpectra = cell(numTones,1);
-for toneIndex = 1:numTones
-    candidateBins{toneIndex} = find(abs(binFrequencies-toneFrequencies(toneIndex)) <= toneSearchHalfWidth);
-    toneSpectra{toneIndex} = zeros(numel(candidateBins{toneIndex}),numHydrophones,numFrames);
-end
-for frameIndex = 1:numFrames
-    firstSample = (frameIndex-1)*hopLength + 1;
-    frameSpectrum = fft(data(firstSample:firstSample+fftLength-1,:));
-    for toneIndex = 1:numTones
-        toneSpectra{toneIndex}(:,:,frameIndex) = frameSpectrum(candidateBins{toneIndex},:);
-    end
-end
-clear data
-
-framesPerWindow = max(1,round(averagingDuration*fs/hopLength));
-numWindows = floor(numFrames/framesPerWindow);
-fprintf('%d frames, %d averaging windows of %d snapshots (%.1f s)\n', ...
-    numFrames,numWindows,framesPerWindow,framesPerWindow*hopLength/fs);
-
-
-%% 5. Replica Fields
-
 numDepths = numel(searchDepths);
 numRanges = numel(searchRanges);
 replicas = cell(numTones,1);
 for toneIndex = 1:numTones
     fprintf('Computing replicas: %d Hz (%d/%d)\n',toneFrequencies(toneIndex),toneIndex,numTones);
-    modes = computeModes(toneFrequencies(toneIndex),modeDepths,waterDepth,sspDepths,sspSpeeds,sediment,halfspace,krakenPath);
-    replicas{toneIndex} = computeReplicas(modes,hydrophoneDepths,hydrophoneOffsets,searchDepths,searchRanges);
+    modes = computeModesMFP(toneFrequencies(toneIndex),modeDepths,waterDepth,sspDepths,sspSpeeds,sediment,halfspace,krakenPath);
+    replicas{toneIndex} = computeReplicasMFP(modes,hydrophoneDepths,hydrophoneOffsets,searchDepths,searchRanges);
 end
 
 
-%% 6. Bartlett MFP for Each Averaging Window
+%% 5. Bartlett MFP for Each Averaging Window of Each File
 
 % Bartlett values are normalized correlations between 0 and 1: unit-norm
-% snapshots, cross-spectral matrix with unit trace, and unit-norm replicas
+% snapshots, cross-spectral matrix with unit trace, and unit-norm replicas. No
+% replica can exceed the largest eigenvalue of the cross-spectral matrix, which
+% is below 1 when the field changes within the window (the cap).
+numFiles = numel(fileNames);
+framesPerWindow = max(1,round(averagingDuration*fs/hopLength));
+
+windowTimes = NaT(0,1);
+windowFiles = zeros(0,1);
+peakValues = zeros(0,1);
+peakRanges = zeros(0,1);
+peakDepths = zeros(0,1);
+bartlettCaps = zeros(0,1);
+selectedFrequencies = zeros(0,numTones);
+incoherentSurfaces = zeros(numDepths,numRanges,0);
 bartlettSurfaces = zeros(numDepths,numRanges,numTones);         % display window
-incoherentSurfaces = zeros(numDepths,numRanges,numWindows);
-selectedFrequencies = zeros(numWindows,numTones);
-windowTimes = zeros(numWindows,1);
-peakValues = zeros(numWindows,1);
-peakRanges = zeros(numWindows,1);
-peakDepths = zeros(numWindows,1);
 
-for windowIndex = 1:numWindows
-    frameIndexes = (windowIndex-1)*framesPerWindow + (1:framesPerWindow);
-    windowTimes(windowIndex) = mean(frameTimes(frameIndexes));
+for fileIndex = 1:numFiles
 
-    for toneIndex = 1:numTones
+    % start time from the file name (RAVA01.YYDDDHHMMSS.sio)
+    timeTokens = regexp(fileNames{fileIndex},'\.(\d{2})(\d{3})(\d{2})(\d{2})(\d{2})\.sio$','tokens','once');
+    timeValues = str2double(timeTokens);
+    fileStart = datetime(2000+timeValues(1),1,timeValues(2),timeValues(3),timeValues(4),timeValues(5));    % UTC
 
-        % strongest bin within the search band (Doppler shift of the tonal)
-        windowSpectra = toneSpectra{toneIndex}(:,:,frameIndexes);
-        [~,bestBin] = max(sum(abs(windowSpectra).^2,[2,3]));
-        selectedFrequencies(windowIndex,toneIndex) = binFrequencies(candidateBins{toneIndex}(bestBin));
+    [crossSpectralMatrices,fileFrequencies,fileWindowTimes] = getToneCrossSpectraMFP(fullfile(dataFolder,fileNames{fileIndex}), ...
+        numHydrophones,fs,fftLength,toneFrequencies,toneSearchHalfWidth,framesPerWindow);
+    numWindows = size(crossSpectralMatrices,4);
+    fprintf('%s: %d averaging windows of %d snapshots (%.1f s)\n', ...
+        fileNames{fileIndex},numWindows,framesPerWindow,framesPerWindow*hopLength/fs);
 
-        snapshots = reshape(windowSpectra(bestBin,:,:),numHydrophones,[]);
-        snapshots = snapshots./vecnorm(snapshots);
-        crossSpectralMatrix = snapshots*snapshots'/size(snapshots,2);
+    for windowIndex = 1:numWindows
+        incoherentSurface = zeros(numDepths,numRanges);
+        bartlettCap = 0;
 
-        bartlett = real(sum(conj(replicas{toneIndex}).*(crossSpectralMatrix*replicas{toneIndex}),1));
-        bartlett = reshape(bartlett,numDepths,numRanges);
-        incoherentSurfaces(:,:,windowIndex) = incoherentSurfaces(:,:,windowIndex) + bartlett/numTones;
-        if windowIndex == displayWindowIndex
-            bartlettSurfaces(:,:,toneIndex) = bartlett;
+        for toneIndex = 1:numTones
+            crossSpectralMatrix = crossSpectralMatrices(:,:,toneIndex,windowIndex);
+            bartlett = real(sum(conj(replicas{toneIndex}).*(crossSpectralMatrix*replicas{toneIndex}),1));
+            bartlett = reshape(bartlett,numDepths,numRanges);
+            incoherentSurface = incoherentSurface + bartlett/numTones;
+            bartlettCap = bartlettCap + max(real(eig(crossSpectralMatrix)))/numTones;
+            if fileIndex == displayFileIndex && windowIndex == displayWindowIndex
+                bartlettSurfaces(:,:,toneIndex) = bartlett;
+            end
         end
-    end
 
-    currentSurface = incoherentSurfaces(:,:,windowIndex);
-    [peakValues(windowIndex),peakIndex] = max(currentSurface(:));
-    [depthIndex,rangeIndex] = ind2sub([numDepths,numRanges],peakIndex);
-    peakDepths(windowIndex) = searchDepths(depthIndex);
-    peakRanges(windowIndex) = searchRanges(rangeIndex);
+        [peakValue,peakIndex] = max(incoherentSurface(:));
+        [depthIndex,rangeIndex] = ind2sub([numDepths,numRanges],peakIndex);
+
+        windowTimes(end+1,1) = fileStart + seconds(fileWindowTimes(windowIndex)); %#ok<SAGROW>
+        windowFiles(end+1,1) = fileIndex; %#ok<SAGROW>
+        peakValues(end+1,1) = peakValue; %#ok<SAGROW>
+        peakRanges(end+1,1) = searchRanges(rangeIndex); %#ok<SAGROW>
+        peakDepths(end+1,1) = searchDepths(depthIndex); %#ok<SAGROW>
+        bartlettCaps(end+1,1) = bartlettCap; %#ok<SAGROW>
+        selectedFrequencies(end+1,:) = fileFrequencies(windowIndex,:); %#ok<SAGROW>
+        incoherentSurfaces(:,:,end+1) = incoherentSurface; %#ok<SAGROW>
+    end
 end
 
-fprintf('\n  Time [s]   Range [m]   Depth [m]   Bartlett\n')
-fprintf('  %8.1f   %9.0f   %9.1f   %8.3f\n',[windowTimes,peakRanges,peakDepths,peakValues]')
+displayIndex = find(windowFiles == displayFileIndex,displayWindowIndex);
+displayIndex = displayIndex(end);
+
+
+%% 6. Comparison with the GPS-Derived Source Position
+
+trackTimes = NaT(numel(trackXbtNumbers),1);
+trackLatitudes = zeros(numel(trackXbtNumbers),1);
+trackLongitudes = zeros(numel(trackXbtNumbers),1);
+for xbtIndex = 1:numel(trackXbtNumbers)
+    [~,xbtCast] = readSoundSpeedCastMFP(processedFolder,'XBT',trackXbtNumbers(xbtIndex),sspDepths,salinityCast.salinity);
+    trackTimes(xbtIndex) = xbtCast.time;
+    trackLatitudes(xbtIndex) = xbtCast.latitude;
+    trackLongitudes(xbtIndex) = xbtCast.longitude;
+end
+sourceRanges = getSourceTrackMFP(windowTimes,layback,trackTimes,trackLatitudes,trackLongitudes,vlaLatitude,vlaLongitude);
+
+% highest Bartlett value near the source position, and whether the peak of the
+% whole panelSurface lies there (within 200 m of the GPS range and in the depth band)
+inDepthBand = searchDepths >= towDepthBand(1) & searchDepths <= towDepthBand(2);
+sourceValues = zeros(numel(windowTimes),1);
+for windowIndex = 1:numel(windowTimes)
+    nearSource = abs(searchRanges - sourceRanges(windowIndex)) <= positionTolerance;
+    sourceValues(windowIndex) = max(incoherentSurfaces(inDepthBand,nearSource,windowIndex),[],'all');
+end
+isOnTarget = abs(peakRanges - sourceRanges) <= 200 & peakDepths >= towDepthBand(1) & peakDepths <= towDepthBand(2);
+
+fprintf('\n  Time (UTC)   GPS range [m]   Peak range [m]   Peak depth [m]   Peak Bartlett   At source   Cap\n')
+for windowIndex = 1:numel(windowTimes)
+    fprintf('  %s   %13.0f   %14.0f   %14.1f   %13.3f   %9.3f   %5.3f\n',string(windowTimes(windowIndex),'HH:mm:ss'), ...
+        sourceRanges(windowIndex),peakRanges(windowIndex),peakDepths(windowIndex),peakValues(windowIndex), ...
+        sourceValues(windowIndex),bartlettCaps(windowIndex));
+end
+fprintf('\n  File (UTC)   Peak on target   Mean Bartlett at source   Mean cap\n');
+for fileIndex = 1:numFiles
+    inFile = windowFiles == fileIndex;
+    fprintf('  %s        %3d of %2d   %23.3f   %8.3f\n',string(windowTimes(find(inFile,1)),'HH:mm'), ...
+        sum(isOnTarget(inFile)),sum(inFile),mean(sourceValues(inFile)),mean(bartlettCaps(inFile)));
+end
+fprintf('  all          %3d of %2d   %23.3f   %8.3f\n',sum(isOnTarget),numel(isOnTarget),mean(sourceValues),mean(bartlettCaps));
 
 
 %% 7. Visualization
 
-figure('Name','Multi-Frequency MFP & Incoherent Averaging','Color','w','Position',[100,100,1400,800]);
-for toneIndex = 1:numTones
+if ~isfolder(resultsFolder)
+    mkdir(resultsFolder);
+end
+displayTime = string(windowTimes(displayIndex),'HH:mm:ss');
+windowDuration = framesPerWindow*hopLength/fs;
+
+figure1 = figure('Name','Multi-Frequency MFP & Incoherent Averaging','Color','w','Position',[100,100,1400,800]);
+for toneIndex = 1:numTones+1
     subplot(2,3,toneIndex);
-    imagesc(searchRanges/1000,searchDepths,bartlettSurfaces(:,:,toneIndex));
-    title(sprintf('%d Hz',toneFrequencies(toneIndex)),'FontSize',14);
+    if toneIndex <= numTones
+        panelSurface = bartlettSurfaces(:,:,toneIndex);
+        panelTitle = sprintf('%d Hz',toneFrequencies(toneIndex));
+    else
+        panelSurface = incoherentSurfaces(:,:,displayIndex);
+        panelTitle = 'Incoherent Average';
+    end
+    [~,peakIndex] = max(panelSurface(:));
+    [depthIndex,rangeIndex] = ind2sub(size(panelSurface),peakIndex);
+    imagesc(searchRanges/1000,searchDepths,panelSurface);
+    hold on
+    plot(sourceRanges(displayIndex)/1000,towDepth,'wx','MarkerSize',12,'LineWidth',2);
+    plot(searchRanges(rangeIndex)/1000,searchDepths(depthIndex),'wo','MarkerSize',10,'LineWidth',1.5);
+    title(sprintf('%s (peak %.2f)',panelTitle,max(panelSurface(:))),'FontSize',14);
     xlabel('Range [km]','FontSize',11);
     ylabel('Depth [m]','FontSize',11);
     colorbar;
-    caxis([0 1]);
+    caxis([0 max(max(panelSurface,[],'all'),eps)]);
     set(gca,'FontSize',12);
 end
-subplot(2,3,6);
-imagesc(searchRanges/1000,searchDepths,incoherentSurfaces(:,:,displayWindowIndex));
-hold on
-plot(peakRanges(displayWindowIndex)/1000,peakDepths(displayWindowIndex),'wo','MarkerSize',10,'LineWidth',1.5);
-title(sprintf('Incoherent Average (t = %.0f s)',windowTimes(displayWindowIndex)),'FontSize',14,'FontWeight','bold');
-xlabel('Range [km]','FontSize',11);
-ylabel('Depth [m]','FontSize',11);
-colorbar;
-caxis([0 1]);
-set(gca,'FontSize',12);
+sgtitle(sprintf('Bartlett MFP, VLA1, JD 147 %s UTC (%.0f s average; x: GPS source position, o: peak)',displayTime,windowDuration));
+print(figure1,fullfile(resultsFolder,'MFP_frequencies.png'),'-dpng','-r150');
 
-figure('Name','MFP Peak over Time','Color','w','Position',[150,150,900,800]);
+figure2 = figure('Name','MFP Peak over Time','Color','w','Position',[150,150,1000,850]);
 subplot(3,1,1);
-plot(windowTimes,peakRanges/1000,'ko-','MarkerFaceColor','k');
+plot(windowTimes,sourceRanges/1000,'k_','MarkerSize',10,'LineWidth',2);
+hold on
+plot(windowTimes(isOnTarget),peakRanges(isOnTarget)/1000,'ro','MarkerFaceColor','r');
+plot(windowTimes(~isOnTarget),peakRanges(~isOnTarget)/1000,'ro');
 ylabel('Range [km]'); grid on;
-title(sprintf('Incoherent MFP Peak (%.0f s averaging)',framesPerWindow*hopLength/fs));
+legend('GPS source range','peak at the source position','peak elsewhere','Location','north');
+title(sprintf('Incoherent MFP peak, VLA1, Track 8 (%.0f s averaging, %d snapshots)',windowDuration,framesPerWindow));
 subplot(3,1,2);
-plot(windowTimes,peakDepths,'ko-','MarkerFaceColor','k');
-set(gca,'YDir','reverse');
-ylabel('Depth [m]'); grid on;
+plot(windowTimes(isOnTarget),peakDepths(isOnTarget),'ro','MarkerFaceColor','r');
+hold on
+plot(windowTimes(~isOnTarget),peakDepths(~isOnTarget),'ro');
+yregion(towDepthBand(1),towDepthBand(2),'FaceColor',[0.85 0.85 0.85]);
+set(gca,'YDir','reverse'); ylim([0 waterDepth]);
+ylabel('Peak depth [m]'); grid on;
 subplot(3,1,3);
-plot(windowTimes,peakValues,'ko-','MarkerFaceColor','k');
+plot(windowTimes,bartlettCaps,'k_','MarkerSize',10,'LineWidth',2);
+hold on
+plot(windowTimes,peakValues,'r^');
+plot(windowTimes,sourceValues,'ro','MarkerFaceColor','r');
 ylim([0 1]);
-xlabel('Time since file start [s]'); ylabel('Bartlett'); grid on;
+xlabel('Time (UTC), JD 147'); ylabel('Bartlett'); grid on;
+legend('cap (largest eigenvalue)','at peak','at GPS source position','Location','best');
+print(figure2,fullfile(resultsFolder,'MFP_track.png'),'-dpng','-r150');
 
-
-%% Local Functions
-
-function modes = computeModes(frequency,modeDepths,waterDepth,sspDepths,sspSpeeds,sediment,halfspace,krakenPath)
-
-% read_modes only reads from the current folder
-fileRoot = 'mfpKraken';
-writeKrakenEnv([fileRoot,'.env'],frequency,waterDepth,sspDepths,sspSpeeds,sediment,halfspace,modeDepths(1),modeDepths);
-
-if isfile([fileRoot,'.mod'])
-    delete([fileRoot,'.mod']);
+figure3 = figure('Name','Incoherent MFP per File','Color','w','Position',[200,200,1500,800]);
+for fileIndex = 1:numFiles
+    surfaceIndex = find(windowFiles == fileIndex,1);
+    panelSurface = incoherentSurfaces(:,:,surfaceIndex);
+    subplot(2,ceil(numFiles/2),fileIndex);
+    imagesc(searchRanges/1000,searchDepths,panelSurface);
+    hold on
+    plot(sourceRanges(surfaceIndex)/1000,towDepth,'wx','MarkerSize',12,'LineWidth',2);
+    plot(peakRanges(surfaceIndex)/1000,peakDepths(surfaceIndex),'wo','MarkerSize',10,'LineWidth',1.5);
+    title(sprintf('%s: peak %.2f, at source %.2f, cap %.2f',string(windowTimes(surfaceIndex),'HH:mm:ss'), ...
+        peakValues(surfaceIndex),sourceValues(surfaceIndex),bartlettCaps(surfaceIndex)),'FontSize',11);
+    xlabel('Range [km]'); ylabel('Depth [m]');
+    colorbar;
+    caxis([0 max(max(panelSurface,[],'all'),eps)]);
 end
-[status,output] = system(['"',krakenPath,'" ',fileRoot]);
-if status ~= 0 || ~isfile([fileRoot,'.mod'])
-    error('KRAKEN failed at %g Hz (exit code %d):\n%s',frequency,status,output);
-end
-
-clear read_modes_bin    % rewind the mode-file reader
-modes = read_modes([fileRoot,'.mod'],frequency);
-fclose('all');
-delete([fileRoot,'.*']);
-
-end
-
-
-function replicas = computeReplicas(modes,hydrophoneDepths,hydrophoneOffsets,searchDepths,searchRanges)
-
-modeDepths = double(modes.z(:));
-k = double(modes.k(:));
-phi = double(modes.phi);
-phiHydrophones = phi(findDepthRows(modeDepths,hydrophoneDepths),:);
-phiSearch = phi(findDepthRows(modeDepths,searchDepths),:);
-
-numHydrophones = numel(hydrophoneDepths);
-numDepths = numel(searchDepths);
-numRanges = numel(searchRanges);
-replicas = zeros(numHydrophones,numDepths,numRanges);
-
-% the Hankel functions depend only on range, so they are computed once per
-% distinct hydrophone range offset (once in total for an untilted array)
-[uniqueOffsets,~,offsetIndexes] = unique(hydrophoneOffsets);
-for offsetIndex = 1:numel(uniqueOffsets)
-    hankel = besselh(0,2,k*(searchRanges(:)'+uniqueOffsets(offsetIndex)));
-    for hydrophoneIndex = find(offsetIndexes == offsetIndex)'
-        replicas(hydrophoneIndex,:,:) = reshape((phiSearch.*phiHydrophones(hydrophoneIndex,:))*hankel,[1,numDepths,numRanges]);
-    end
-end
-
-replicas = reshape(replicas,numHydrophones,[]);
-replicas = replicas./vecnorm(replicas);
-
-end
-
-
-function rows = findDepthRows(modeDepths,depths)
-
-[distances,rows] = min(abs(modeDepths-depths(:)'),[],1);
-if any(distances > 2e-3)
-    error('KRAKEN did not return modes at all requested depths');
-end
-rows = rows(:);
-
-end
+sgtitle('Incoherent Bartlett MFP, first averaging window of each file (x: GPS source position, o: peak)');
+print(figure3,fullfile(resultsFolder,'MFP_files.png'),'-dpng','-r150');

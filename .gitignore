@@ -9,3 +9,6 @@ mfpKraken.*
 # proposals that failed during an inversion
 ReferenceCode/errorSample*.mat
 Matlab/Work-in-Progress/GI/errorSample*.mat
+
+# acoustic data (SIO files), kept locally in Matlab/Data
+Matlab/Data/

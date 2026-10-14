@@ -17,7 +17,7 @@ fprintf(fid,'%d\n',2);
 fprintf(fid,'%s\n','''CVF''');
 
 % medium 1: water column
-fprintf(fid,'%d %1.1f %4.2f\n',0,0.0,waterDepth);
+fprintf(fid,'%d %1.1f %8.3f\n',0,0.0,waterDepth);
 for sspIndex = 1:numel(sspDepths)
     if sspIndex == 1
         fprintf(fid,'%8.3f %8.3f %4.1f %5.3f %4.1f %4.1f /\n',sspDepths(sspIndex),sspSpeeds(sspIndex),0.0,1.000,0.0,0.0);
@@ -28,13 +28,13 @@ end
 
 % medium 2: thin sediment layer with linear gradient
 sedimentBottomDepth = waterDepth + sediment.thickness;
-fprintf(fid,'%d %1.1f %4.2f\n',0,0.0,sedimentBottomDepth);
-fprintf(fid,'%8.3f %8.3f %4.1f %5.3f %4.2f %4.1f /\n',waterDepth,sediment.speeds(1),0.0,sediment.densities(1),sediment.attenuations(1),0.0);
-fprintf(fid,'%8.3f %8.3f %4.1f %5.3f %4.2f %4.1f /\n',sedimentBottomDepth,sediment.speeds(2),0.0,sediment.densities(2),sediment.attenuations(2),0.0);
+fprintf(fid,'%d %1.1f %8.3f\n',0,0.0,sedimentBottomDepth);
+fprintf(fid,'%8.3f %8.3f %4.1f %5.3f %6.4f %4.1f /\n',waterDepth,sediment.speeds(1),0.0,sediment.densities(1),sediment.attenuations(1),0.0);
+fprintf(fid,'%8.3f %8.3f %4.1f %5.3f %6.4f %4.1f /\n',sedimentBottomDepth,sediment.speeds(2),0.0,sediment.densities(2),sediment.attenuations(2),0.0);
 
 % acoustic halfspace below the sediment layer
 fprintf(fid,'%s\n','''A'' 0.0');
-fprintf(fid,'%8.3f %8.3f %4.1f %5.3f %4.2f %4.1f /\n',sedimentBottomDepth,halfspace.speed,0.0,halfspace.density,halfspace.attenuation,0.0);
+fprintf(fid,'%8.3f %8.3f %4.1f %5.3f %6.4f %4.1f /\n',sedimentBottomDepth,halfspace.speed,0.0,halfspace.density,halfspace.attenuation,0.0);
 
 % phase-speed limits and maximum range in km
 fprintf(fid,'%8.2f %8.2f\n',0.0,halfspace.speed);

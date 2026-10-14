@@ -3,7 +3,7 @@
 function [sensitivityAll,valuesAll] = getSensitivitySBCEXP22(prior,scenario,numValues)
 
 numFreqs = size(scenario.freqs,1);
-numReceivers = size(scenario.receiverDepths,1);
+numReceivers = size(scenario.hydrophoneHeights,1);
 
 if(mod(numValues,2)==0)
     numValues = numValues + 1;      %this has to be an odd number
