@@ -41,7 +41,11 @@ for currentDimension = currentOrder
         % accept or reject
         [sampleTmp,logLikelihoodTmp,logPriorTmp,acceptancePattern(currentDimension)] = acceptRejectPrior(sampleTmp,logLikelihoodTmp,logPriorTmp,proposedSample,proposedLogLikelihood,proposedLogPrior);
 
-    catch
+    catch err
+       % a missing or non-executable KRAKEN binary is a setup error, not a bad proposal
+       if strcmp(err.identifier,'SBCEX:krakenUnavailable')
+           rethrow(err);
+       end
        errorSample = proposedSample;
        save(['errorSample ' datestr(now)],'errorSample','temperature','currentIndex')
     end

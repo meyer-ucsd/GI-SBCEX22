@@ -3,19 +3,21 @@ clear variables; close all; clc; %addpath('./results'); addpath('./resultsAdiaba
 numBins = 50;
 numBurnIn = 20000;
 
-load('results17L2H');
+resultsFile = 'results';     % 'results' (main14L2, main17L2H), 'resultsData' (mainData14L2), or a *Tmp file
+load(resultsFile);
 plotTitle = '';
 
 numTotal = sum(samples(1,1,:)>0);
 numTemperatures = size(samples,2);
 
 
-% compute estimates
+% compute estimates (at temperature 1, logLikelihoods and logPriors are not tempered)
 samples1 = permute(samples(:,1,numBurnIn:numTotal),[1,3,2]);
 logLikelihoods = logLikelihoods(1,numBurnIn:numTotal)';
+logPosteriors = logLikelihoods + logPriors(1,numBurnIn:numTotal)';
 
 mmseEstimate = mean(samples1,2)
-[~,maxIndex] = max(logLikelihoods);
+[~,maxIndex] = max(logPosteriors);
 mapEstimate = samples1(:,maxIndex)
 
 %isvalid = squeeze(samples(11,1,:) < 9.5);

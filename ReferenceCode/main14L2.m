@@ -9,7 +9,8 @@ freqsTonesUpper = [303; 403; 503; 703; 953];
 scenario.freqs = freqsTones;
 scenario.maxModes = 50;
 scenario.receiverDepths = [14.0000;17.7500;21.5000;25.2500;29.0000;32.7500;36.5000;40.2500;44.0000;47.7500;51.5000;55.2500;59.0000;62.7500;66.5000;70.2500];
-scenario.likelihoodConstantSNR = 10;
+scenario.snrDb = 10;                                    % SNR of the synthetic data in dB
+scenario.likelihoodConstantSNR = 10^(scenario.snrDb/10) + 1;      % linear factor expected by evaluateLogLikelihood, i.e., E[trace(R)]/(numReceivers*noiseVariance)
 scenario.modelMode = 'L2M1';
 scenario.templateName = '88';
 
@@ -40,7 +41,7 @@ scenario.coupling = zeros(0,2);
 
 %% compute fake data
 
-SNR = scenario.likelihoodConstantSNR;
+SNR = scenario.snrDb;
 
 truePressure = getPressuresFromStateSBCEXP17(scenario.knownState,scenario,1);
 
@@ -74,7 +75,7 @@ temperatureFactor = 2;   %multiplicative increase in temperature
 numTemperatures = 4;
 tempering.temperatures = temperatureFactor.^(0:numTemperatures-1)';
 tempering.isSwap = true;
-parpool('local',numTemperatures);
+parpool('local',min(numTemperatures,parcluster('local').NumWorkers));    % parfor spreads the temperatures over the available workers
 
 % mcmc parameters
 mcmc.scalingFactor = (2.4)^2/numParametersUnkown;
@@ -119,12 +120,16 @@ sampleCorrelation = nan(numParameters,numParameters,numTemperatures);
 numSamplesCovariance = numAcceptanceDimensionInit*ones(numTemperatures,1);
 
 % initialize covariance matrix used as a proposal distribution; the method based on sampling us slower but typically more accurate
-proposalCovariances = zeros(numParameters,numParameters,numTemperatures,numSamples);
+% current proposal covariances; a thinned history is kept to limit memory (entry i belongs to sample (i-1)*covarianceHistoryInterval+1)
+proposalCovariances = zeros(numParameters,numParameters,numTemperatures);
+covarianceHistoryInterval = 1000;
+proposalCovarianceHistory = zeros(numParameters,numParameters,numTemperatures,floor((numSamples-1)/covarianceHistoryInterval)+1);
 if(mcmc.isFastInit)
-    [proposalCovariances(:,:,:,1),proposalRotations,proposalVariances] = getCovariancesDifferences(scenario,tempering.temperatures,mcmc);
+    [proposalCovariances,proposalRotations,proposalVariances] = getCovariancesDifferences(scenario,tempering.temperatures,mcmc);
 else
-    [proposalCovariances(:,:,:,1),proposalRotations,proposalVariances] = getCovariancesSampling(priorRotation,priorVariances,dataMatrixes,scenario,numAcceptanceDimensionInit,tempering.temperatures,mcmc);
+    [proposalCovariances,proposalRotations,proposalVariances] = getCovariancesSampling(priorRotation,priorVariances,dataMatrixes,scenario,numAcceptanceDimensionInit,tempering.temperatures,mcmc);
 end
+proposalCovarianceHistory(:,:,:,1) = proposalCovariances;
 
 
 
@@ -151,9 +156,14 @@ tic
 for currentIndex = 2:numSamples
 
     logLikelihoodsCurrent = logLikelihoods(:,currentIndex-1);
-    samplesCurrent = permute(samples(:,:,1:currentIndex-1),[1,3,2]);
+    % pass only the samples getProposalCovariance needs: the initial block once, afterwards only the last sample
+    if(any(currentIndex-1 == numSamplesCovariance))
+        samplesCurrent = permute(samples(:,:,1:currentIndex-1),[1,3,2]);
+    else
+        samplesCurrent = permute(samples(:,:,currentIndex-1),[1,3,2]);
+    end
     logPriorsCurrent = logPriors(:,currentIndex-1);
-    proposalCovariancesCurrent = proposalCovariances(:,:,:,currentIndex-1);
+    proposalCovariancesCurrent = proposalCovariances;
     acceptancePatterns = zeros(numParametersUnkown,numTemperatures);
 
     parfor currentTemp = 1:numTemperatures
@@ -162,7 +172,7 @@ for currentIndex = 2:numSamples
         currentOrder = randperm(numParametersUnkown);
 
         % get proposal covariance
-        [sampleMean(:,currentTemp),sampleCorrelation(:,:,currentTemp),proposalCovariances(:,:,currentTemp,currentIndex),proposalRotations(:,:,currentTemp),proposalVariances(:,currentTemp)] = getProposalCovariance(sampleMean(:,currentTemp),sampleCorrelation(:,:,currentTemp),proposalCovariancesCurrent(:,:,currentTemp),proposalRotations(:,:,currentTemp),proposalVariances(:,currentTemp),samplesCurrent(:,:,currentTemp),numSamplesCovariance(currentTemp),currentIndex-1,mcmc);
+        [sampleMean(:,currentTemp),sampleCorrelation(:,:,currentTemp),proposalCovariances(:,:,currentTemp),proposalRotations(:,:,currentTemp),proposalVariances(:,currentTemp)] = getProposalCovariance(sampleMean(:,currentTemp),sampleCorrelation(:,:,currentTemp),proposalCovariancesCurrent(:,:,currentTemp),proposalRotations(:,:,currentTemp),proposalVariances(:,currentTemp),samplesCurrent(:,:,currentTemp),numSamplesCovariance(currentTemp),currentIndex-1,mcmc);
 
         % sample, compute likelihood, and accept/reject
         [samples(:,currentTemp,currentIndex),logLikelihoods(currentTemp,currentIndex),logPriors(currentTemp,currentIndex),acceptancePatterns(:,currentTemp)] = getNextSample(dataMatrixes,samplesCurrent(:,end,currentTemp),logLikelihoodsCurrent(currentTemp),logPriorsCurrent(currentTemp),proposalRotations(:,:,currentTemp),proposalVariances(:,currentTemp),currentOrder,[tempering.temperatures(currentTemp);currentTemp],scenario,currentIndex);
@@ -170,13 +180,17 @@ for currentIndex = 2:numSamples
     end
 
     % plot diagnostic info for individual temperature
-    printOutputStrings(samples(:,:,currentIndex),proposalCovariances(:,:,:,currentIndex),currentIndex,isAccepted,acceptancePatterns,tempering.temperatures,numSamplesCovariance,nan,scenario);
+    printOutputStrings(samples(:,:,currentIndex),proposalCovariances,currentIndex,isAccepted,acceptancePatterns,tempering.temperatures,numSamplesCovariance,nan,scenario);
 
     % perform swaps and plot diagnostic info of swap
     [samples(:,:,currentIndex),logLikelihoods(:,currentIndex),logPriors(:,currentIndex),swapIndexes(:,:,currentIndex)] = performSwap(samples(:,:,currentIndex),logLikelihoods(:,currentIndex),logPriors(:,currentIndex),tempering,currentIndex);
 
+    if(mod(currentIndex-1,covarianceHistoryInterval) == 0)
+        proposalCovarianceHistory(:,:,:,(currentIndex-1)/covarianceHistoryInterval+1) = proposalCovariances;
+    end
+
     if( mod(currentIndex,10000) == 0 && currentIndex ~= numSamples )
-        save('resultsTmp','samples','logLikelihoods','logPriors','proposalCovariances','isAccepted','swapIndexes','tempering','scenario','mcmc')
+        save('resultsTmp','samples','logLikelihoods','logPriors','proposalCovariances','proposalCovarianceHistory','covarianceHistoryInterval','isAccepted','swapIndexes','tempering','scenario','mcmc')
     end
 
 end
@@ -185,4 +199,4 @@ toc
 prior = scenario.prior;
 [sensitivityY,sensitivityX] = getSensitivitySBCEXP17(prior,scenario,25);
 
-save('results','samples','logLikelihoods','logPriors','proposalCovariances','isAccepted','swapIndexes','tempering','scenario','mcmc','sensitivityY','sensitivityX')
+save('results','samples','logLikelihoods','logPriors','proposalCovariances','proposalCovarianceHistory','covarianceHistoryInterval','isAccepted','swapIndexes','tempering','scenario','mcmc','sensitivityY','sensitivityX')

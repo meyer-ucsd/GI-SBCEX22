@@ -60,7 +60,7 @@ for indexF = 1:numFreqs
     ks(1:numModes,indexF) = modesKraken.k;
 
 end
-eval( [ '! rm ' filenameOut '.*' ] );
+delete([filenameOut,'.*']);
 
 % reorganize modes into vector
 numModesTotal = size(modesKraken.phi,2);
@@ -145,12 +145,37 @@ end
 
 function runKraken( filename )
 
-runkraken = which( 'kraken.exe' );
+% remove an old mode file so that a failed run cannot be read as valid output
+modFile = [filename,'.mod'];
+if isfile(modFile)
+    delete(modFile);
+end
+
+runkraken = getKrakenPath();
+[status,output] = system(['"' runkraken '" ' filename]);
+
+% exit codes 126/127 mean the binary itself could not be executed (e.g., wrong CPU architecture)
+if (status == 126 || status == 127)
+    error('SBCEX:krakenUnavailable','Cannot execute %s:\n%s',runkraken,output);
+end
+if (status ~= 0 || ~isfile(modFile))
+    error('SBCEX:krakenFailed','KRAKEN failed for %s.env (exit code %d):\n%s',filename,status,output);
+end
+
+end
+
+
+function runkraken = getKrakenPath()
+
+% prefer the binary bundled for this platform (bin/maca64 = Apple silicon, bin/maci64 = Intel),
+% otherwise use kraken.exe from the MATLAB path
+runkraken = fullfile(fileparts(mfilename('fullpath')),'bin',computer('arch'),'kraken.exe');
+if ~isfile(runkraken)
+    runkraken = which( 'kraken.exe' );
+end
 
 if ( isempty( runkraken ) )
-    error( 'kraken.exe not found in your Matlab path' )
-else
-    eval( [ '! "' runkraken '" ' filename ] );
+    error('SBCEX:krakenUnavailable','No kraken.exe for platform %s in bin/ or on the MATLAB path',computer('arch'))
 end
 
 end

@@ -9,22 +9,32 @@ scenario.samplingFrequency = 25000;           % in Hz
 scenario.snrDb = 0;                           % per-receiver in-band SNR in dB
 
 scenario.sourceHorizontalRange = 2000;        % in meters
-scenario.sourceDepth = 120;                    % in meters
+scenario.sourceDepth = 120;                   % in meters (SBCEX22 tows: ~45 m Mud Patch, ~120 m shelf break)
 scenario.sourcePressureAtOneMeter = 1;        % arbitrary pressure unit
 
 scenario.bandLFM = [1500;4500];               % start and stop frequencies in Hz
 scenario.durationLFM = 1;                     % in seconds
-scenario.taperFractionLFM = 0.02;             % raised-cosine duration at each end
+scenario.taperFractionLFM = 0;                % raised-cosine duration at each end (SBCEX22 chirps had no taper)
 
-% The default VLA is unaliased over the LFM band and is in the far field at
-% the selected source range. The original 3.75 m-spaced VLA can be selected
-% to illustrate spatial aliasing, but it requires approximately 19 km range
-% to satisfy the conservative far-field criterion.
+% Spherical wavefronts give the exact arrival time at each element; plane
+% wavefronts reproduce the far-field model that the beamformer assumes.
+scenario.useSphericalWavefronts = true;
+
+% SBCEX22 MPL VLA: 16 hydrophones with 3.75 m spacing, hydrophone 1 (deepest)
+% 7.25 m above the seafloor (trip report, Fig. B.3.3). The water depth is
+% ~75 m in the Mud Patch and ~200 m (VLA1) or ~400 m (VLA2) at the shelf break.
+scenario.waterDepth = 200;                    % in meters
+originalVLADepths = scenario.waterDepth - 7.25 - 3.75*(0:15)';
+
+% The original VLA is spatially aliased over the LFM band and requires
+% approximately 19 km range to satisfy the conservative far-field criterion.
+% The dense VLA (0.15 m spacing, same center depth) is unaliased and in the
+% far field at the selected source range.
 scenario.useOriginalSparseVLA = true;
 if scenario.useOriginalSparseVLA
-    scenario.receiverDepths = (67.75:-3.75:11.5)';
+    scenario.receiverDepths = originalVLADepths;
 else
-    receiverCenterDepth = mean([11.5;67.75]);
+    receiverCenterDepth = mean(originalVLADepths);
     numReceivers = 16;
     receiverSpacing = 0.15;
     receiverIndexes = (0:numReceivers-1)' - (numReceivers-1)/2;
@@ -60,7 +70,7 @@ sourceTime = (0:1/scenario.samplingFrequency: ...
 sourceSignal = generateLFM(sourceTime,scenario.bandLFM, ...
     scenario.durationLFM,scenario.taperFractionLFM);
 
-%% Compute Free-Space Far-Field Propagation
+%% Compute Free-Space Propagation
 
 sourceRange = hypot(scenario.sourceHorizontalRange, ...
     scenario.sourceDepth-receiverReferenceDepth);
@@ -77,21 +87,37 @@ arrivalDelayOffsets = -receiverRelativeDepths*sind(sourceLookAngle)/ ...
 maximumPathLengthError = max(abs(exactPathLengths-farFieldPathLengths));
 maximumPhaseErrorDegrees = 360*scenario.bandLFM(2)* ...
     maximumPathLengthError/scenario.soundSpeed;
-sourceAmplitude = scenario.sourcePressureAtOneMeter/sourceRange;
 
-fprintf('\nFree-space far-field LFM simulation\n')
+if scenario.useSphericalWavefronts
+    propagationPathLengths = exactPathLengths;
+    wavefrontName = 'spherical';
+else
+    propagationPathLengths = farFieldPathLengths;
+    wavefrontName = 'plane';
+end
+receiverAmplitudes = scenario.sourcePressureAtOneMeter./propagationPathLengths;
+
+fprintf('\nFree-space LFM simulation (%s wavefronts, far-field beamformer)\n', ...
+    wavefrontName)
 fprintf('  Source range at array center: %.3f m\n',sourceRange)
 fprintf('  Source look angle:            %.3f degrees\n',sourceLookAngle)
 fprintf('  VLA aperture:                 %.3f m\n',arrayAperture)
 fprintf('  Maximum receiver spacing:    %.3f m\n',maximumReceiverSpacing)
 fprintf('  Alias-free spacing at f_max: %.3f m\n',maximumAliasFreeSpacing)
 fprintf('  Conservative far-field range: %.3f m\n',fraunhoferDistance)
-fprintf('  Maximum plane-wave error:    %.3f mm (%.3f degrees at f_max)\n\n', ...
+fprintf('  Maximum plane-wave error:    %.3f mm (%.3f degrees at f_max)\n', ...
     1000*maximumPathLengthError,maximumPhaseErrorDegrees)
+if maximumReceiverSpacing > maximumAliasFreeSpacing
+    fprintf('  Note: receiver spacing exceeds the alias-free limit; grating lobes are expected.\n')
+end
+if sourceRange < fraunhoferDistance
+    fprintf('  Note: source is inside the far-field range; plane-wave steering is mismatched.\n')
+end
+fprintf('\n')
 
 %% Generate the Waveform at Each Receiver Array Element
 
-receiverArrivalTimes = farFieldPathLengths/scenario.soundSpeed;
+receiverArrivalTimes = propagationPathLengths/scenario.soundSpeed;
 recordingStartTime = max(0,min(receiverArrivalTimes)-scenario.preArrivalDuration);
 recordingEndTime = max(receiverArrivalTimes) + scenario.durationLFM + ...
     scenario.postArrivalDuration;
@@ -102,7 +128,7 @@ time = recordingStartTime + (0:numTimeSamples-1)'/scenario.samplingFrequency;
 receiverSignalsNoiseless = zeros(numReceivers,numTimeSamples);
 for receiverIndex = 1:numReceivers
     retardedTime = time-receiverArrivalTimes(receiverIndex);
-    receiverSignalsNoiseless(receiverIndex,:) = sourceAmplitude*generateLFM( ...
+    receiverSignalsNoiseless(receiverIndex,:) = receiverAmplitudes(receiverIndex)*generateLFM( ...
         retardedTime,scenario.bandLFM,scenario.durationLFM, ...
         scenario.taperFractionLFM)';
 end
@@ -426,25 +452,39 @@ numSignals = size(signals,1);
 numTimeSamples = size(signals,2);
 delayedSignals = zeros(size(signals));
 
+% The Lagrange filter is most accurate when its delay lies at the center of
+% its stencil, so it implements filterDelay = centerDelay + fractionalDelay and
+% the remaining (possibly negative) integer shift is applied separately.
+centerDelay = floor(filterOrder/2);
+
 for signalIndex = 1:numSignals
     currentDelay = delaySamples(signalIndex);
-    integerDelay = floor(currentDelay);
+    if mod(filterOrder,2) == 0
+        integerDelay = round(currentDelay);
+    else
+        integerDelay = floor(currentDelay);
+    end
     fractionalDelay = currentDelay-integerDelay;
+    filterDelay = centerDelay + fractionalDelay;
+    remainingShift = integerDelay - centerDelay;
 
     coefficients = zeros(filterOrder+1,1);
     for coefficientIndex = 0:filterOrder
         otherIndexes = (0:filterOrder)';
         otherIndexes(coefficientIndex+1) = [];
         coefficients(coefficientIndex+1) = prod( ...
-            (fractionalDelay-otherIndexes)./(coefficientIndex-otherIndexes));
+            (filterDelay-otherIndexes)./(coefficientIndex-otherIndexes));
     end
 
     fractionallyDelayedSignal = filter(coefficients,1,signals(signalIndex,:));
-    if integerDelay == 0
+    if remainingShift == 0
         delayedSignals(signalIndex,:) = fractionallyDelayedSignal;
-    elseif integerDelay < numTimeSamples
-        delayedSignals(signalIndex,integerDelay+1:end) = ...
-            fractionallyDelayedSignal(1:end-integerDelay);
+    elseif remainingShift > 0 && remainingShift < numTimeSamples
+        delayedSignals(signalIndex,remainingShift+1:end) = ...
+            fractionallyDelayedSignal(1:end-remainingShift);
+    elseif remainingShift < 0 && -remainingShift < numTimeSamples
+        delayedSignals(signalIndex,1:end+remainingShift) = ...
+            fractionallyDelayedSignal(1-remainingShift:end);
     end
 end
 

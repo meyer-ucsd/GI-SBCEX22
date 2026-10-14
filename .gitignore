@@ -1,0 +1,11 @@
+# macOS Finder metadata
+.DS_Store
+
+# KRAKEN scratch files written while the code runs
+ReferenceCode/SBCEXP17Compute*.*
+Matlab/Work-in-Progress/GI/SBCEXP22Compute*.*
+mfpKraken.*
+
+# proposals that failed during an inversion
+ReferenceCode/errorSample*.mat
+Matlab/Work-in-Progress/GI/errorSample*.mat

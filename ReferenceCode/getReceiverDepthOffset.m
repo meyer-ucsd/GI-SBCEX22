@@ -1,9 +1,9 @@
 % Florian Meyer, 2024
 
 function [receiverDepthsTilted,receiverOffsets] = getReceiverDepthOffset(receiverDepths,tilt)
-% positive tilt makes the array lean forward, i.e., the range of the first
-% element with respect to the source is reduced; the last (deepest) element has
-% always an offset of zero
+% positive tilt makes the array lean away from the source, i.e., the range of
+% the first (shallowest) element with respect to the source is increased; the
+% last (deepest) element has always an offset of zero
 
 % compute height of VLA
 receiverZs = -receiverDepths;
