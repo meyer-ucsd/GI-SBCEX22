@@ -8,7 +8,7 @@ function [proposalCovariances,proposalRotations,proposalVariances] = getCovarian
 numParameters = size(scenario.priorMean,1);
 numTemperatures = size(temperatures,1);
 
-[approxCovariance,~] = covarianceDifferences(scenario);
+[approxCovariance,~] = covarianceDifferences(scenario,mcmc);
 approxCovariance(:,scenario.isKnown) = 0;
 approxCovariance(scenario.isKnown,:) = 0;
 
@@ -17,6 +17,10 @@ proposalRotations = zeros(numParameters,numParameters,numTemperatures);
 proposalVariances = zeros(numParameters,numTemperatures); 
 for indexT = 1:numTemperatures
     proposalCovariances(:,:,indexT) = mcmc.scalingFactor * ( approxCovariance*temperatures(indexT) + mcmc.regularizationFactor * eye(numParameters) );
+
+    % eig returns the eigenvalues in ascending order only for an exactly symmetric matrix; the sampler
+    % relies on this order (largest variances first) to skip the directions of the known parameters
+    proposalCovariances(:,:,indexT) = 1/2 * ( proposalCovariances(:,:,indexT) + proposalCovariances(:,:,indexT)' );
     [proposalRotations(:,:,indexT), eigenValues ] = eig(proposalCovariances(:,:,indexT,1));
 
     proposalRotations(:,:,indexT) = flip(proposalRotations(:,:,indexT),2);
@@ -26,9 +30,13 @@ end
 end
 
 
-function [posteriorCovariance,jacobian] = covarianceDifferences(scenario)
+function [posteriorCovariance,jacobian] = covarianceDifferences(scenario,mcmc)
 
 constantSNR = scenario.likelihoodConstantSNR;
+if(isnan(constantSNR))
+    % the noise variance is integrated out in the likelihood, so the linearization needs an assumed SNR
+    constantSNR = mcmc.fastInitSNR;
+end
 prior = scenario.prior;
 
 % Extract prior information

@@ -2,7 +2,8 @@ clear variables; close all; clc; rng(1); delete(gcp('nocreate'));
 
 % SBCEXP22 shelf break, VLA1 (200 m contour), source tow Track 8 (JD 147,
 % 1929Z-0000Z): one sediment layer with gradients in speed, density, and
-% attenuation over a halfspace
+% attenuation over a halfspace. The data file, averaging window, sound speed
+% profile, and GPS source range are those of MFP/MFP.m at 2100Z.
 
 %% set general parameters
 
@@ -10,21 +11,61 @@ freqsTonesLF = [503; 653; 803; 1003; 1253];         % M71 tonals
 
 scenario.freqs = freqsTonesLF;
 scenario.hydrophoneHeights = 5.5 + 1.75 + 3.75*(0:15)';    % above the seafloor, hydrophone 1 first (trip report, Fig. B.3.3)
-scenario.likelihoodConstantSNR = 10;                % linear factor (not dB) used by evaluateLogLikelihood
+scenario.likelihoodConstantSNR = nan;               % nan: unknown noise variance at each frequency, integrated out (evaluateLogLikelihood); a number is used as a fixed linear SNR factor (not dB)
 
-% sound speed profile: downcast of CTD #20 (JD 148, 1828Z); CTD #18 (JD 147,
-% 1812Z) or XBT #11 (JD 147, 2133Z) are closer in time and should replace it
-ctd = load('SBCEXP22_ssp_ctd020.mat');
-[~,deepestIndex] = max(ctd.ctd_Depth);
-[sspDepths,uniqueIndexes] = unique(ctd.ctd_Depth(1:deepestIndex));
-scenario.ssp.depths = sspDepths(:);
-scenario.ssp.speeds = ctd.ctd_ssp(uniqueIndexes);
-scenario.ssp.speeds = scenario.ssp.speeds(:);
+% data folders and MFP functions (sound speed casts and source track)
+dataFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','acoustic');
+processedFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','processed');
+addpath(fullfile(fileparts(mfilename('fullpath')),'..','MFP'));
+
+% data: first averaging window of the 2100Z file, processed as in MFP.m
+scenario.fileName = 'RAVA01.22147210000.sio';      % JD 147, 2100Z
+data.samplingFrequency = 25000;
+data.fftLength = 2^14;
+data.toneFrequencies = scenario.freqs;
+data.toneSearchHalfWidth = 3;                      % search for the Doppler-shifted tonal [Hz]
+data.numHydrophones = numel(scenario.hydrophoneHeights);
+
+windowIndex = 1;                                   % averaging window of the file, counted as in MFP.m (12 windows per file)
+numSnapshots = 15;                                 % snapshots per averaging window (MFP.m: 5 s averaging)
+snapshotHop = data.fftLength/2/data.samplingFrequency;              % snapshots overlap by 50% [s]
+scenario.windowStart = (windowIndex-1)*numSnapshots*snapshotHop;    % start of the averaging window [s] since file start
+scenario.windowDuration = (numSnapshots+1)*snapshotHop;             % averaging window [s]
+
+% sound speed profile as in MFP.m: XBT #11 (JD 147, 2133Z, launched during the
+% tow 3.4 km east of VLA1) with the salinity of CTD #16 (JD 147, 1312Z, at
+% VLA1) in 1 m depth bins down to 200 m; in deeper water the deepest value is held
+sspDepths = (0:1:200)';
+[~,salinityCast] = readSoundSpeedCastMFP(processedFolder,'CTD',16,sspDepths);
+scenario.ssp.depths = sspDepths;
+scenario.ssp.speeds = readSoundSpeedCastMFP(processedFolder,'XBT',11,sspDepths,salinityCast.salinity);
 scenario.numSSPPoints = 500;
 
-% reference state (MFP environment), used for comparison in the plots
-sourceRange = 2500;
-sourceDepth = 120;
+% source range from the ship's GPS as in MFP.m: VLA1 position (trip report,
+% Table 2), ship positions at the launches of XBT #9 to #11 (JD 147, 1932Z,
+% 2033Z, 2133Z; App. D), and the source 180 m behind the ship along the track
+vlaLatitude = 40.048467;                           % [deg]
+vlaLongitude = -70.884167;                         % [deg]
+trackXbtNumbers = (9:11)';
+layback = 180;                                     % [m]
+trackTimes = NaT(numel(trackXbtNumbers),1);
+trackLatitudes = zeros(numel(trackXbtNumbers),1);
+trackLongitudes = zeros(numel(trackXbtNumbers),1);
+for xbtIndex = 1:numel(trackXbtNumbers)
+    [~,xbtCast] = readSoundSpeedCastMFP(processedFolder,'XBT',trackXbtNumbers(xbtIndex),sspDepths,salinityCast.salinity);
+    trackTimes(xbtIndex) = xbtCast.time;
+    trackLatitudes(xbtIndex) = xbtCast.latitude;
+    trackLongitudes(xbtIndex) = xbtCast.longitude;
+end
+timeValues = str2double(regexp(scenario.fileName,'\.(\d{2})(\d{3})(\d{2})(\d{2})(\d{2})\.sio$','tokens','once'));      % RAVA01.YYDDDHHMMSS.sio
+fileStart = datetime(2000+timeValues(1),1,timeValues(2),timeValues(3),timeValues(4),timeValues(5));                 % UTC
+windowTime = fileStart + seconds(scenario.windowStart + scenario.windowDuration/2);                                 % center of the averaging window
+scenario.sourceRangeGPS = getSourceTrackMFP(windowTime,layback,trackTimes,trackLatitudes,trackLongitudes,vlaLatitude,vlaLongitude);
+
+% reference state used for comparison in the plots: MFP environment, GPS
+% source range, and depth of the MFP peak at 2100Z (nominal tow depth 120 m)
+sourceRange = scenario.sourceRangeGPS;
+sourceDepth = 125;
 tilt = 0;
 waterDepth = 200;
 
@@ -44,21 +85,11 @@ scenario.knownState = [sourceRange;sourceDepth;tilt;waterDepth;speedTop;speedBot
 numParameters = size(scenario.knownState,1);
 
 scenario.isKnown = false(numParameters,1);
+scenario.isKnown([7;8;9;10;13;14]) = true;          % densities and attenuations of the layer and the halfspace have limited sensitivity at this range (getSensitivitySBCEXP22); they are kept at their values in scenario.knownState
 
 scenario.coupling = zeros(0,2);
 
 %% load data
-
-dataFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','acoustic');
-scenario.fileName = 'RAVA01.22147212000.sio';      % JD 147, 2120Z
-scenario.windowStart = 0;                          % start of the averaging window [s] since file start
-scenario.windowDuration = 10;                      % averaging window [s] (MFP.m uses 5 s; for the GI the two are equivalent)
-
-data.samplingFrequency = 25000;
-data.fftLength = 2^14;
-data.toneFrequencies = scenario.freqs;
-data.toneSearchHalfWidth = 3;                      % search for the Doppler-shifted tonal [Hz]
-data.numHydrophones = numel(scenario.hydrophoneHeights);
 
 [dataMatrixes,scenario.selectedFrequencies] = getDataMatrixesSBCEXP22(fullfile(dataFolder,scenario.fileName),scenario.windowStart,scenario.windowDuration,data);
 
@@ -83,9 +114,10 @@ mcmc.scalingFactor = (2.4)^2/numParametersUnkown;
 mcmc.regularizationFactor = 1e-7;
 mcmc.priorScaling = 1/5;
 mcmc.isFastInit = false;
+mcmc.fastInitSNR = 2;                               % linear SNR factor assumed by the fast initialization when the noise variance is integrated out; about 1/(1-B) for the Bartlett values B of 0.4-0.5 reached in the MFP
 
 % define prior (the order of the fields has to match the order of the state)
-sourceRangeCenter = 2500;                           % set from GPS or the MFP peak of this window
+sourceRangeCenter = scenario.sourceRangeGPS;        % GPS source range of this averaging window
 scenario.prior.sourceRange = sourceRangeCenter + [-500;500];
 scenario.prior.sourceDepth = [100;140];             % tow depth ~120 m
 scenario.prior.tilt = [-3;3];

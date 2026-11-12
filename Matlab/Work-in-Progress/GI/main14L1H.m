@@ -1,7 +1,8 @@
 clear variables; close all; clc; rng(1); delete(gcp('nocreate'));
 
 % SBCEXP22 shelf break, VLA1 (200 m contour): synthetic data, one sediment
-% layer with gradients in speed, density, and attenuation over a halfspace
+% layer with gradients in speed, density, and attenuation over a halfspace.
+% The sound speed profile and the source position are those of MFP/MFP.m at 2100Z.
 
 %% set general parameters
 
@@ -10,19 +11,23 @@ freqsTonesLF = [503; 653; 803; 1003; 1253];         % M71 tonals
 scenario.freqs = freqsTonesLF;
 scenario.hydrophoneHeights = 5.5 + 1.75 + 3.75*(0:15)';    % above the seafloor, hydrophone 1 first (trip report, Fig. B.3.3)
 scenario.snrDb = 10;                                % SNR of the synthetic data in dB
-scenario.likelihoodConstantSNR = 10^(scenario.snrDb/10) + 1;      % linear factor expected by evaluateLogLikelihood, i.e., E[trace(R)]/(numReceivers*noiseVariance)
+scenario.likelihoodConstantSNR = nan;               % nan: unknown noise variance at each frequency, integrated out (evaluateLogLikelihood); for a known noise level use the linear factor E[trace(R)]/(numReceivers*noiseVariance) = 10^(scenario.snrDb/10) + 1
 
-% sound speed profile: downcast of CTD #20 (JD 148, 1828Z)
-ctd = load('SBCEXP22_ssp_ctd020.mat');
-[~,deepestIndex] = max(ctd.ctd_Depth);
-[sspDepths,uniqueIndexes] = unique(ctd.ctd_Depth(1:deepestIndex));
-scenario.ssp.depths = sspDepths(:);
-scenario.ssp.speeds = ctd.ctd_ssp(uniqueIndexes);
-scenario.ssp.speeds = scenario.ssp.speeds(:);
+% sound speed profile as in MFP.m: XBT #11 (JD 147, 2133Z, launched during the
+% tow 3.4 km east of VLA1) with the salinity of CTD #16 (JD 147, 1312Z, at
+% VLA1) in 1 m depth bins down to 200 m; in deeper water the deepest value is held
+processedFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','processed');
+addpath(fullfile(fileparts(mfilename('fullpath')),'..','MFP'));
+sspDepths = (0:1:200)';
+[~,salinityCast] = readSoundSpeedCastMFP(processedFolder,'CTD',16,sspDepths);
+scenario.ssp.depths = sspDepths;
+scenario.ssp.speeds = readSoundSpeedCastMFP(processedFolder,'XBT',11,sspDepths,salinityCast.salinity);
 scenario.numSSPPoints = 500;
 
-sourceRange = 2500;
-sourceDepth = 120;
+% source position of the MFP at 2100Z (first averaging window): GPS source
+% range and depth of the MFP peak
+sourceRange = 1030;
+sourceDepth = 125;
 tilt = 1;
 waterDepth = 200;
 
@@ -44,6 +49,7 @@ scenario.knownState = [sourceRange;sourceDepth;tilt;waterDepth;speedTop;speedBot
 numParameters = size(scenario.knownState,1);
 
 scenario.isKnown = false(numParameters,1);
+scenario.isKnown([7;8;9;10;13;14]) = true;          % densities and attenuations of the layer and the halfspace have limited sensitivity at this range (getSensitivitySBCEXP22); they are kept at their values in scenario.knownState
 
 scenario.coupling = zeros(0,2);
 
@@ -90,6 +96,7 @@ mcmc.scalingFactor = (2.4)^2/numParametersUnkown;
 mcmc.regularizationFactor = 1e-7;
 mcmc.priorScaling = 1/5;
 mcmc.isFastInit = true;
+mcmc.fastInitSNR = 10^(scenario.snrDb/10) + 1;      % linear SNR factor assumed by the fast initialization when the noise variance is integrated out
 
 % define prior (the order of the fields has to match the order of the state)
 sourceRangeCenter = sourceRange;                    % from GPS or the MFP peak for real data
