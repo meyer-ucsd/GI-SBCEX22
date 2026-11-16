@@ -42,4 +42,17 @@ Check at this window with the MFP seabed:
 
 `GI/main14L1H.m` (synthetic data) uses the same sound speed profile and source position (1030 m, 125 m).
 
-Not done: a full inversion run, and the joint inversion with the 20:30 file.
+A full inversion run (70,000 samples, 10 temperatures) was started on `meyer01.ucsd.edu` on 2026-11-11; see `CHANGES.md`, Section 6, for the setup and where the results are written.
+
+Not done: the joint inversion with the 20:30 file.
+
+## 2026-11-13: First inversion results
+
+The run of 2026-11-11 was stopped by a server reboot; its first 30,000 samples are used. Details and tables are in `CHANGES.md` in the repository root:
+
+- Section 7: estimates, Bartlett values of each tone, and why the layer interface is not resolved (the data resolve the sound speed against depth, about 1555 m/s at the seafloor and about 1586 m/s below 1 m, but no interface).
+- Section 8: a second inversion with a continuous sound speed at the interface (`GI/mainData14L1HContinuous.m`), started on 2026-11-13.
+- Section 9: the 15 averaged snapshots count as one in the likelihood; the data support an effective count of 2. Not applied.
+- Section 10: how the noise variance of each tone could be sampled. Not implemented.
+
+The open points are listed at the top of `CHANGES.md`.

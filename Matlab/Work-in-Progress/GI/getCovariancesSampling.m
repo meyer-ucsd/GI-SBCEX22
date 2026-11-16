@@ -7,14 +7,17 @@ numTemperatures = size(temperatures,1);
 proposalCovariances = zeros(numParameters,numParameters,numTemperatures);
 proposalRotations = zeros(numParameters,numParameters,numTemperatures);
 proposalVariances = zeros(numParameters,numTemperatures);
-for indexT = 1:numTemperatures
+% the temperatures are independent of each other and are computed in parallel if
+% a parallel pool is open (each temperature uses its own KRAKEN files, index indexT)
+parfor indexT = 1:numTemperatures
 
     approxCovariance = covarianceSampling(priorRotation,priorVariances,dataMatrixes,scenario,numAcceptanceDimensionInit,[temperatures(indexT),indexT],mcmc);
 
-    proposalCovariances(:,:,indexT) = mcmc.scalingFactor * ( approxCovariance*temperatures(indexT) + mcmc.regularizationFactor * eye(numParameters) );
-    [proposalRotations(:,:,indexT), eigenValues ] = eig(proposalCovariances(:,:,indexT));
+    proposalCovariance = mcmc.scalingFactor * ( approxCovariance*temperatures(indexT) + mcmc.regularizationFactor * eye(numParameters) );
+    [proposalRotation, eigenValues ] = eig(proposalCovariance);
 
-    proposalRotations(:,:,indexT) = flip(proposalRotations(:,:,indexT),2);
+    proposalCovariances(:,:,indexT) = proposalCovariance;
+    proposalRotations(:,:,indexT) = flip(proposalRotation,2);
     proposalVariances(:,indexT) = flip(diag(eigenValues));
 end
 

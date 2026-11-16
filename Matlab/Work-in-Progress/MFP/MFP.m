@@ -60,6 +60,14 @@ halfspace.speed = 1650;                       % sandy shelf-break sediment [m/s]
 halfspace.density = 1.85;                     % [g/cm^3]
 halfspace.attenuation = 0.65;                 % [dB/(m kHz)]
 
+% environment from the inversion: name of a results file in ../GI (results of
+% mainData14L1H.m, mainData14L1HContinuous.m, or mainData14L1HJoint.m; see the
+% list in GI/showResultsData.m). Its MAP estimate then replaces the water depth,
+% the array tilt, and the seabed given above, and the figures are saved with
+% the ending '_MAP'. '' keeps the values above.
+inversionResultsFile = 'resultsDataJoint_run20261114T1102_30000samples';
+inversionBurnIn = 5000;                       % samples removed at the beginning, as in GI/showResultsData.m
+
 % source position: VLA1 position (trip report, Table 2), ship track from the
 % GPS positions at the XBT launches during the tow (App. D), layback estimated
 % by tuneSoundSpeedMFP.m, and nominal tow depth (App. F)
@@ -81,28 +89,67 @@ atPath = fullfile(getenv('HOME'),'Desktop','Matlab','at');
 
 %% 2. Acoustics Toolbox
 
-if isempty(which('read_modes'))
+% read_modes and kraken.exe of the Acoustics Toolbox if it is on the path or at
+% atPath; otherwise the mode reader and the KRAKEN binary of this repository,
+% which the inversion uses (GI/readModes.m and ReferenceCode/bin)
+if isempty(which('read_modes')) && isfolder(fullfile(atPath,'Matlab'))
     addpath(genpath(fullfile(atPath,'Matlab')));
 end
-if isempty(which('kraken.exe'))
+if isempty(which('kraken.exe')) && isfolder(fullfile(atPath,'bin'))
     addpath(fullfile(atPath,'bin'));
 end
+if isempty(which('read_modes'))
+    addpath(fullfile(fileparts(mfilename('fullpath')),'..','GI'),'-end');
+end
 krakenPath = which('kraken.exe');
-if isempty(krakenPath) || isempty(which('read_modes'))
-    error('Acoustics Toolbox not found; set atPath to its location')
+if isempty(krakenPath)
+    krakenPath = fullfile(fileparts(mfilename('fullpath')),'..','..','..','ReferenceCode','bin',computer('arch'),'kraken.exe');
+end
+if ~isfile(krakenPath) || (isempty(which('read_modes')) && isempty(which('readModes')))
+    error('KRAKEN or the mode reader not found; set atPath to the location of the Acoustics Toolbox')
 end
 
 
 %% 3. Array Geometry and Sound Speed Profile
+
+% MAP estimate of the inversion: sample with the highest posterior value after
+% burn-in at temperature 1, as in GI/showResultsData.m; the state is ordered as
+% in GI/getPressuresFromStateSBCEXP22.m
+figureEnding = '';
+replicaNote = {};
+if ~isempty(inversionResultsFile)
+    inversion = load(fullfile(fileparts(mfilename('fullpath')),'..','GI',[inversionResultsFile,'.mat']),'samples','logLikelihoods','logPriors');
+    if size(inversion.samples,1) > 14
+        error('%s has a sound speed profile of the water with EOF coefficients; this is not implemented here',inversionResultsFile)
+    end
+    validSamples = inversionBurnIn+1:size(inversion.samples,3);
+    [~,mapIndex] = max(inversion.logLikelihoods(1,validSamples) + inversion.logPriors(1,validSamples));
+    mapState = inversion.samples(:,1,validSamples(mapIndex));
+    arrayTilt = mapState(3);
+    waterDepth = mapState(4);
+    sediment.speeds = mapState(5:6);
+    sediment.densities = mapState(7:8);
+    sediment.attenuations = mapState(9:10);
+    sediment.thickness = mapState(11);
+    halfspace.speed = mapState(12);
+    halfspace.density = mapState(13);
+    halfspace.attenuation = mapState(14);
+    figureEnding = '_MAP';
+    replicaNote = {['replicas: MAP estimate of ',strrep(inversionResultsFile,'_','\_')]};
+    fprintf('Environment: MAP estimate of %s (sample %d)\n',inversionResultsFile,validSamples(mapIndex));
+    fprintf('  water depth %.2f m, tilt %.3f deg, layer %.2f m with %.1f to %.1f m/s, halfspace %.1f m/s\n', ...
+        waterDepth,arrayTilt,sediment.thickness,sediment.speeds(1),sediment.speeds(2),halfspace.speed);
+    fprintf('  (MAP estimate of the source for the reference window: range %.1f m, depth %.2f m)\n',mapState(1),mapState(2));
+end
 
 hydrophoneHeights = hydrophoneSpacing*(0:numHydrophones-1)';    % above hydrophone 1
 hydrophoneDepths = waterDepth - hydrophone1HeightAboveBottom - hydrophoneHeights*cosd(arrayTilt);
 hydrophoneOffsets = hydrophoneHeights*sind(arrayTilt);           % added to the source range
 modeDepths = unique(round([hydrophoneDepths;searchDepths],3));
 
-% 1 m depth bins; above the shallowest and below the deepest sample the
-% profile is held constant
-sspDepths = (0:1:waterDepth)';
+% 1 m depth bins and the water depth as the last point; above the shallowest
+% and below the deepest sample the profile is held constant
+sspDepths = unique([(0:1:floor(waterDepth))';waterDepth]);
 [~,salinityCast] = readSoundSpeedCastMFP(processedFolder,'CTD',salinityCtdNumber,sspDepths);
 sspSpeeds = readSoundSpeedCastMFP(processedFolder,sspCastType,sspCastNumber,sspDepths,salinityCast.salinity);
 
@@ -254,8 +301,8 @@ for toneIndex = 1:numTones+1
     caxis([0 max(max(panelSurface,[],'all'),eps)]);
     set(gca,'FontSize',12);
 end
-sgtitle(sprintf('Bartlett MFP, VLA1, JD 147 %s UTC (%.0f s average; x: GPS source position, o: peak)',displayTime,windowDuration));
-print(figure1,fullfile(resultsFolder,'MFP_frequencies.png'),'-dpng','-r150');
+sgtitle([{sprintf('Bartlett MFP, VLA1, JD 147 %s UTC (%.0f s average; x: GPS source position, o: peak)',displayTime,windowDuration)},replicaNote]);
+print(figure1,fullfile(resultsFolder,['MFP_frequencies',figureEnding,'.png']),'-dpng','-r150');
 
 figure2 = figure('Name','MFP Peak over Time','Color','w','Position',[150,150,1000,850]);
 subplot(3,1,1);
@@ -265,7 +312,7 @@ plot(windowTimes(isOnTarget),peakRanges(isOnTarget)/1000,'ro','MarkerFaceColor',
 plot(windowTimes(~isOnTarget),peakRanges(~isOnTarget)/1000,'ro');
 ylabel('Range [km]'); grid on;
 legend('GPS source range','peak at the source position','peak elsewhere','Location','north');
-title(sprintf('Incoherent MFP peak, VLA1, Track 8 (%.0f s averaging, %d snapshots)',windowDuration,framesPerWindow));
+title([{sprintf('Incoherent MFP peak, VLA1, Track 8 (%.0f s averaging, %d snapshots)',windowDuration,framesPerWindow)},replicaNote]);
 subplot(3,1,2);
 plot(windowTimes(isOnTarget),peakDepths(isOnTarget),'ro','MarkerFaceColor','r');
 hold on
@@ -281,7 +328,7 @@ plot(windowTimes,sourceValues,'ro','MarkerFaceColor','r');
 ylim([0 1]);
 xlabel('Time (UTC), JD 147'); ylabel('Bartlett'); grid on;
 legend('cap (largest eigenvalue)','at peak','at GPS source position','Location','best');
-print(figure2,fullfile(resultsFolder,'MFP_track.png'),'-dpng','-r150');
+print(figure2,fullfile(resultsFolder,['MFP_track',figureEnding,'.png']),'-dpng','-r150');
 
 figure3 = figure('Name','Incoherent MFP per File','Color','w','Position',[200,200,1500,800]);
 for fileIndex = 1:numFiles
@@ -298,5 +345,5 @@ for fileIndex = 1:numFiles
     colorbar;
     caxis([0 max(max(panelSurface,[],'all'),eps)]);
 end
-sgtitle('Incoherent Bartlett MFP, first averaging window of each file (x: GPS source position, o: peak)');
-print(figure3,fullfile(resultsFolder,'MFP_files.png'),'-dpng','-r150');
+sgtitle([{'Incoherent Bartlett MFP, first averaging window of each file (x: GPS source position, o: peak)'},replicaNote]);
+print(figure3,fullfile(resultsFolder,['MFP_files',figureEnding,'.png']),'-dpng','-r150');

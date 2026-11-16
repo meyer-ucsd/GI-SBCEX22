@@ -14,8 +14,15 @@ if status ~= 0 || ~isfile([fileRoot,'.mod'])
     error('KRAKEN failed at %g Hz (exit code %d):\n%s',frequency,status,output);
 end
 
-clear read_modes_bin    % rewind the mode-file reader
-modes = read_modes([fileRoot,'.mod'],frequency);
+% mode reader of the Acoustics Toolbox, or the one of the inversion code
+% (GI/readModes.m) if the toolbox is not on the path
+if ~isempty(which('read_modes'))
+    clear read_modes_bin    % rewind the mode-file reader
+    modes = read_modes([fileRoot,'.mod'],frequency);
+else
+    clear readModes         % rewind the mode-file reader
+    modes = readModes([fileRoot,'.mod'],frequency);
+end
 fclose('all');
 delete([fileRoot,'.*']);
 
