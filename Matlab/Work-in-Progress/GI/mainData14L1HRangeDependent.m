@@ -49,6 +49,16 @@ scenario.freqs = freqsTonesLF;
 scenario.hydrophoneHeights = 5.5 + 1.75 + 3.75*(0:15)';    % above the seafloor, hydrophone 1 first (trip report, Fig. B.3.3)
 scenario.likelihoodConstantSNR = nan;               % nan: unknown noise variance at each frequency, integrated out (evaluateLogLikelihood); a number is used as a fixed linear SNR factor (not dB)
 
+% propagation model (getModesSBCEXP22.m): 'kraken_env' (kraken.exe with an
+% environment file and a mode file), 'kraken_mex' (the same solver as a MEX
+% function without files, Matlab/KrakenMex), or 'orca'. The ORCA files are not
+% part of the repository; they are expected in Matlab/Orca/<platform> (see
+% getModesOrcaSBCEXP22.m, also for the other settings in scenario.orca). The
+% result files of a run with ORCA have Orca at the end of their names.
+scenario.model = 'kraken_mex';                       % default since 2026-11-19; 'kraken_env' gives the same field to 0.999999 and is about 1.4 times slower
+scenario.orca.numSSPPoints = 65;                    % points of the water profile passed to ORCA (KRAKEN uses scenario.numSSPPoints); the run time of ORCA is proportional to this number
+scenario.orca.cphmax = nan;                         % largest phase speed of the modes [m/s]; nan: speed of the halfspace, i.e., trapped modes only, as in the KRAKEN run; a larger value adds leaky modes
+
 % sound speed profile of the water
 isRangeDependent = true;                            % true: the profile at the source may differ from the profile at the array; false: control run with the same profile at both ends
 eofBoundArray = 2;                                  % prior interval of each coefficient at the array: -eofBoundArray to eofBoundArray [standard deviations over the casts] (as in MFP/tuneSoundSpeedMFP.m)
@@ -59,6 +69,19 @@ if(isRangeDependent)
 else
     resultsFile = 'resultsDataEOFRangeIndependent';
 end
+if(strcmpi(scenario.model,'Orca'))
+    resultsFile = [resultsFile,'Orca'];
+end
+
+% first sample of the initialization and of all chains: the MAP estimate of an
+% earlier run without EOF coefficients (results file in this folder; see the list
+% in showResultsData.m), with all EOF coefficients at zero. '' starts at the centre
+% of the prior, as the other scripts do. The run of 2026-11-15 that started at the
+% centre of the prior stayed in a secondary mode: range 1046 m and a log-likelihood
+% of about 200, where the MAP estimate of the joint run has 296 in this model
+% (CHANGES.md, Section 26).
+startResultsFile = 'resultsDataJoint_run20261114T1102_30000samples';
+startBurnIn = 5000;                                 % samples removed at the beginning of that run, as in showResultsData.m
 
 % data folders and MFP functions (sound speed casts and source track)
 dataFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','acoustic');
@@ -225,7 +248,19 @@ scenario.priorStds(1) = 100;
 
 % initialize prior and initial proposal distribution
 [scenario.priorMean,priorCovariance,priorRotation,priorVariances] = getPriorCovariance(scenario,mcmc);
-scenario.priorMean(scenario.coupling(:,1)) = scenario.priorMean(scenario.coupling(:,2));       % the first sample is the prior mean; it has to satisfy the coupling
+scenario.priorMean(scenario.coupling(:,1)) = scenario.priorMean(scenario.coupling(:,2));       % the prior mean has to satisfy the coupling
+
+% first sample (getCovariancesSampling and all chains); scenario.priorMean stays
+% the centre of the prior, which evaluateLogPrior uses for the source range
+scenario.firstSample = scenario.priorMean;
+if(~isempty(startResultsFile))
+    startResults = load(fullfile(fileparts(mfilename('fullpath')),[startResultsFile,'.mat']),'samples','logLikelihoods','logPriors');
+    startValid = startBurnIn+1:size(startResults.samples,3);
+    [~,startIndex] = max(startResults.logLikelihoods(1,startValid) + startResults.logPriors(1,startValid));
+    numStartParameters = size(startResults.samples,1);
+    scenario.firstSample(1:numStartParameters) = startResults.samples(:,1,startValid(startIndex));      % the EOF coefficients stay at zero
+    clear startResults
+end
 
 % initialize covariance matrix
 sampleMean = nan(numParameters,numTemperatures);
@@ -253,7 +288,7 @@ logPriors = zeros(numTemperatures,numSamples);
 logLikelihoods = zeros(numTemperatures,numSamples);
 isAccepted = false(numTemperatures,numSamples);
 swapIndexes = nan(2,numTemperatures,numSamples);
-samples(:,:,1) = repmat(scenario.priorMean,[1,numTemperatures]);
+samples(:,:,1) = repmat(scenario.firstSample,[1,numTemperatures]);
 isAccepted(:,1) = true;
 
 modelledPressure = getPressuresFromStateSBCEXP22(samples(:,1,1),scenario,1);

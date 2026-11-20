@@ -18,6 +18,12 @@ scenario.freqs = freqsTonesLF;
 scenario.hydrophoneHeights = 5.5 + 1.75 + 3.75*(0:15)';    % above the seafloor, hydrophone 1 first (trip report, Fig. B.3.3)
 scenario.likelihoodConstantSNR = nan;               % nan: unknown noise variance at each frequency, integrated out (evaluateLogLikelihood); a number is used as a fixed linear SNR factor (not dB)
 
+% propagation model (getModesSBCEXP22.m): 'kraken_env' (kraken.exe with an
+% environment file and a mode file), 'kraken_mex' (the same solver as a MEX
+% function without files, Matlab/KrakenMex), or 'orca' (files not part of the
+% repository, see getModesOrcaSBCEXP22.m)
+scenario.model = 'kraken_mex';                       % default since 2026-11-19; 'kraken_env' gives the same field to 0.999999 and is about 1.4 times slower
+
 % data folders and MFP functions (sound speed casts and source track)
 dataFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','acoustic');
 processedFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','processed');

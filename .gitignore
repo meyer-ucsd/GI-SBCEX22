@@ -6,9 +6,21 @@ ReferenceCode/SBCEXP17Compute*.*
 Matlab/Work-in-Progress/GI/SBCEXP22Compute*.*
 mfpKraken.*
 
+# KRAKEN as a MEX function (Matlab/KrakenMex): files written by a build; the
+# source and the MEX files (mkrak.mex*) are part of the repository
+Matlab/KrakenMex/**/*.o
+Matlab/KrakenMex/**/*.mod
+Matlab/KrakenMex/**/*.a
+Matlab/KrakenMex/**/*.log
+Matlab/KrakenMex/fort.6
+
 # proposals that failed during an inversion
 ReferenceCode/errorSample*.mat
 Matlab/Work-in-Progress/GI/errorSample*.mat
 
 # acoustic data (SIO files), kept locally in Matlab/Data
 Matlab/Data/
+
+# ORCA (MEX file, helper program, and wrapper of the guarded build; must not be
+# published), kept locally in Matlab/Orca/<platform>
+Matlab/Orca/

@@ -7,7 +7,55 @@ function [pressure,pressureReal] = getPressuresFromStateSBCEXP22(state,scenario,
 %  9 layer atten. top [dB/(m kHz)] 10 layer atten. bottom [dB/(m kHz)]
 % 11 layer thickness [m]
 % 12 halfspace speed [m/s]       13 halfspace density [g/cm^3]  14 halfspace attenuation [dB/(m kHz)]
-% further entries (optional): EOF coefficients of the sound speed of the water, see below
+% further entries (optional): EOF coefficients of the sound speed of the water, see below;
+% source range and source depth of further files and the roughness of the seafloor
+% (mainData14L1HTwoFiles.m), see below
+
+% joint inversion of several files (mainData14L1HTwoFiles.m): all files share the
+% environment and the tilt. scenario.files(f) holds what differs between the files:
+%   sourceRangeIndex, sourceDepthIndex  state entries of the source range of the
+%                                       reference window of the file and of its source depth
+%   sourceRangeOffsets                  ranges of the windows of the file minus the range of its reference window
+%   loggerTemperatures (optional)       temperatures of the loggers of the array at the time of the file
+%   roughnessSurface (optional)         rms roughness of the sea surface at the time of the file [m]
+% The columns of pressure are ordered as the data matrices: all windows of the
+% first file (all tones of its first window, ...), then all windows of the second file, ...
+if(isfield(scenario,'files'))
+    numFiles = numel(scenario.files);
+    pressureFiles = cell(1,numFiles);
+    for fileIndex = 1:numFiles
+        file = scenario.files(fileIndex);
+        stateFile = state;
+        stateFile(1) = state(file.sourceRangeIndex);
+        stateFile(2) = state(file.sourceDepthIndex);
+        scenarioFile = rmfield(scenario,'files');
+        scenarioFile.sourceRangeOffsets = file.sourceRangeOffsets;
+        if(isfield(file,'loggerTemperatures'))
+            scenarioFile.loggers.temperatures = file.loggerTemperatures;
+        end
+        if(isfield(file,'roughnessSurface'))
+            scenarioFile.roughness(1) = file.roughnessSurface;
+        end
+        pressureFiles{fileIndex} = getPressuresFromStateSBCEXP22(stateFile,scenarioFile,index);
+    end
+    pressure = [pressureFiles{:}];
+    pressureReal = [real(pressure(:)); imag(pressure(:))];
+    return
+end
+
+% rms roughness of the seafloor as an entry of the state (scenario.roughness holds
+% the roughness of the sea surface and of the seafloor, getModesSBCEXP22.m)
+if(isfield(scenario,'roughnessSeafloorIndex'))
+    scenario.roughness(2) = state(scenario.roughnessSeafloorIndex);
+end
+
+% sound speed profile of the water from the temperature loggers of the array
+% (scenario.loggers, getLoggerProfileSBCEXP22.m): the loggers move with the water
+% depth as the hydrophones do; scenario.ssp.speeds is the reference profile
+% above the loggers
+if(isfield(scenario,'loggers'))
+    scenario.ssp.speeds = getLoggerProfileSBCEXP22(scenario.ssp,scenario.loggers,state(4));
+end
 
 [receiverDepths,receiverOffsets] = getReceiverGeometrySBCEXP22(scenario.hydrophoneHeights,state(4),state(3));
 

@@ -13,6 +13,12 @@ scenario.hydrophoneHeights = 5.5 + 1.75 + 3.75*(0:15)';    % above the seafloor,
 scenario.snrDb = 10;                                % SNR of the synthetic data in dB
 scenario.likelihoodConstantSNR = nan;               % nan: unknown noise variance at each frequency, integrated out (evaluateLogLikelihood); for a known noise level use the linear factor E[trace(R)]/(numReceivers*noiseVariance) = 10^(scenario.snrDb/10) + 1
 
+% propagation model (getModesSBCEXP22.m): 'kraken_env' (kraken.exe with an
+% environment file and a mode file), 'kraken_mex' (the same solver as a MEX
+% function without files, Matlab/KrakenMex), or 'orca' (files not part of the
+% repository, see getModesOrcaSBCEXP22.m)
+scenario.model = 'kraken_mex';                       % default since 2026-11-19; 'kraken_env' gives the same field to 0.999999 and is about 1.4 times slower
+
 % sound speed profile as in MFP.m: XBT #11 (JD 147, 2133Z, launched during the
 % tow 3.4 km east of VLA1) with the salinity of CTD #16 (JD 147, 1312Z, at
 % VLA1) in 1 m depth bins down to 200 m; in deeper water the deepest value is held

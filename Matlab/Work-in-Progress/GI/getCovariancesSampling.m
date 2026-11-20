@@ -43,6 +43,9 @@ logLikelihoods = zeros(totalSamples,1);
 logPriors = zeros(totalSamples,1);
 acceptancePatternTotal = zeros(numParametersInference,1);
 samples(:,1) = priorMean;
+if(isfield(scenario,'firstSample'))
+    samples(:,1) = scenario.firstSample;        % first sample given by the main script instead of the prior mean
+end
 
 modelledPressure = getPressuresFromStateSBCEXP22(samples(:,1,1),scenario,temperature(2));
 logLikelihoods(1) = sum(evaluateLogLikelihood(modelledPressure,dataMatrixes,nan,scenario.likelihoodConstantSNR)) * 1/temperature(1);

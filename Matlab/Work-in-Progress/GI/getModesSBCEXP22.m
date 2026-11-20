@@ -1,7 +1,49 @@
 function [phiReceivers,phiSource,ks] = getModesSBCEXP22(waterDepth,sediment,halfspace,receiverDepths,sourceDepth,scenario,index)
-% Runs KRAKEN for all frequencies and returns, for each frequency, the mode
-% shapes at the receiver depths and at the source depth and the wavenumbers.
-% The modes are computed exactly at the requested depths (no interpolation).
+% Computes the modes for all frequencies and returns, for each frequency, the
+% mode shapes at the receiver depths and at the source depth and the
+% wavenumbers. The modes are computed at the requested depths.
+%
+% scenario.model selects how the modes are computed; all functions that call
+% this one follow it:
+%   'kraken_mex'  KRAKEN as a MEX function (Matlab/KrakenMex): the solver of
+%                 kraken.exe without any files (getModesKrakenMexSBCEXP22.m).
+%                 The setting of the main scripts since 2026-11-19.
+%   'kraken_env'  KRAKEN as a separate program: an environment file is written,
+%                 kraken.exe is run, and its mode file is read. Also used if the
+%                 field does not exist and for 'Kraken': the results files
+%                 written before 2026-11-19 were computed this way, and their
+%                 evaluation reproduces the stored values exactly.
+%   'orca'        ORCA (getModesOrcaSBCEXP22.m); its files are not part of the
+%                 repository
+% The names are not case sensitive.
+%
+% scenario.roughness (optional): rms roughness [m] of the sea surface (first
+% entry) and of the seafloor (second entry), passed to KRAKEN as a loss of the
+% coherent field. Only with the two KRAKEN versions.
+
+roughness = zeros(2,1);
+if(isfield(scenario,'roughness'))
+    roughness(1:numel(scenario.roughness)) = scenario.roughness(:);
+end
+
+model = 'kraken_env';                               % scenario of a results file from before the flag existed
+if(isfield(scenario,'model'))
+    model = lower(char(scenario.model));
+    if(strcmp(model,'kraken'))
+        model = 'kraken_env';
+    end
+end
+if(~any(strcmp(model,{'kraken_env','kraken_mex','orca'})))
+    error('SBCEX:krakenUnavailable','Unknown propagation model ''%s'': scenario.model is ''kraken_env'', ''kraken_mex'', or ''orca''',char(scenario.model));
+end
+
+if(strcmp(model,'orca'))
+    if(any(roughness ~= 0))
+        error('SBCEX:orcaUnavailable','The roughness of the sea surface and of the seafloor (scenario.roughness) is implemented for KRAKEN only (scenario.model ''kraken_env'' or ''kraken_mex'')');
+    end
+    [phiReceivers,phiSource,ks] = getModesOrcaSBCEXP22(waterDepth,sediment,halfspace,receiverDepths,sourceDepth,scenario);
+    return
+end
 
 freqs = scenario.freqs;
 numFreqs = numel(freqs);
@@ -14,12 +56,18 @@ sspSpeeds = interp1(ssp.depths,ssp.speeds,sspDepths,'pchip',nan);
 sspSpeeds(sspDepths < ssp.depths(1)) = ssp.speeds(1);
 sspSpeeds(sspDepths > ssp.depths(end)) = ssp.speeds(end);
 
+% KRAKEN as a MEX function: no files
+if(strcmp(model,'kraken_mex'))
+    [phiReceivers,phiSource,ks] = getModesKrakenMexSBCEXP22(freqs,waterDepth,sspDepths,sspSpeeds,sediment,halfspace,sourceDepth,receiverDepths,roughness);
+    return
+end
+
 % depths at which KRAKEN writes the modes (rounded as in the environment file)
 modeDepths = unique(round([receiverDepths;sourceDepth],3));
 
 % write environment file and run KRAKEN; the index keeps files of parallel workers apart
 filenameOut = ['SBCEXP22Compute',num2str(index)];
-writeKrakenEnvSBCEXP22([filenameOut,'.env'],freqs,waterDepth,sspDepths,sspSpeeds,sediment,halfspace,sourceDepth,modeDepths);
+writeKrakenEnvSBCEXP22([filenameOut,'.env'],freqs,waterDepth,sspDepths,sspSpeeds,sediment,halfspace,sourceDepth,modeDepths,roughness);
 runKraken(filenameOut);
 
 % read modes for each frequency

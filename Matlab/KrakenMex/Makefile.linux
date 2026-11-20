@@ -1,0 +1,64 @@
+FC = gfortran
+CC = gcc
+# Optimization as in the Makefile of the Acoustics Toolbox, with the instruction
+# set x86-64-v3 (AVX2 and FMA, processors since about 2013) instead of that of
+# the build computer. Without an instruction set beyond the default of the
+# compiler the solver is about 1.7 times slower (CHANGES.md, Section 50).
+OPTFLAGS ?= -O3 -ffast-math -funroll-all-loops -fomit-frame-pointer -march=x86-64-v3
+FFLAGS ?= $(OPTFLAGS) -fPIC -ffree-line-length-none -Imisc
+MISC_FFLAGS ?= $(OPTFLAGS) -fPIC -ffree-line-length-none
+
+# Adjust this to the MATLAB installation on the Linux machine.
+MATLABROOT ?= /usr/local/MATLAB/R2022a
+MEXEXT ?= $(shell "$(MATLABROOT)/bin/mexext" 2>/dev/null || echo mexa64)
+MATLABBIN ?= $(MATLABROOT)/bin/glnxa64
+MATLABINC ?= $(MATLABROOT)/extern/include
+
+LIBGFORTRAN ?= $(shell $(FC) -print-file-name=libgfortran.so)
+LIBQUADMATH ?= $(shell $(FC) -print-file-name=libquadmath.so)
+LIBGCCS ?= $(shell $(FC) -print-file-name=libgcc_s.so.1)
+GFORTRAN_RPATH ?= $(dir $(LIBGFORTRAN))
+
+OBJECTS = FatalError_mex.o KrakenMexInputMod.o kraken_mex.o KrakenMod.o BCImpedanceMod.o InverseIterationMod.o RootFinderBrent.o Scattering.o
+
+all: mkrak.$(MEXEXT)
+
+clean:
+	-rm -f *.o *.mod mkrak.$(MEXEXT) *_genmod.f90
+	$(MAKE) -C misc clean
+
+mkrak.$(MEXEXT): mkrak.o c_mexapi_version.o $(OBJECTS) misc/libmisc.a
+	$(CC) -shared -o $@ mkrak.o c_mexapi_version.o $(OBJECTS) misc/libmisc.a -L$(MATLABBIN) -lmex -lmx -lmat -lut -Wl,-rpath,$(MATLABBIN) -Wl,-rpath,$(GFORTRAN_RPATH) $(LIBGFORTRAN) $(LIBQUADMATH) $(LIBGCCS) -lm -ldl -pthread
+
+misc/libmisc.a:
+	$(MAKE) -C misc FC="$(FC)" FFLAGS="$(MISC_FFLAGS)"
+
+mkrak.o: mkrak.c
+	$(CC) -c -fPIC -DMATLAB_MEX_FILE -I$(MATLABINC) $< -o $@
+
+c_mexapi_version.o: $(MATLABROOT)/extern/version/c_mexapi_version.c
+	$(CC) -c -fPIC -DMATLAB_MEX_FILE -I$(MATLABINC) $< -o $@
+
+FatalError_mex.o fatalerror.mod: FatalError_mex.f90
+	$(FC) -c $(FFLAGS) FatalError_mex.f90
+
+KrakenMexInputMod.o krakenmexinputmod.mod: FatalError_mex.o KrakenMod.o misc/libmisc.a KrakenMexInputMod.f90
+	$(FC) -c $(FFLAGS) KrakenMexInputMod.f90
+
+KrakenMod.o krakenmod.mod: misc/libmisc.a KrakenMod.f90
+	$(FC) -c $(FFLAGS) KrakenMod.f90
+
+BCImpedanceMod.o bcimpedancemod.mod: KrakenMod.o misc/libmisc.a BCImpedanceMod.f90
+	$(FC) -c $(FFLAGS) BCImpedanceMod.f90
+
+InverseIterationMod.o inverseiterationmod.mod: InverseIterationMod.f90
+	$(FC) -c $(FFLAGS) InverseIterationMod.f90
+
+RootFinderBrent.o rootfinderbrent.mod: RootFinderBrent.f90
+	$(FC) -c $(FFLAGS) RootFinderBrent.f90
+
+Scattering.o: Scattering.f90
+	$(FC) -c $(FFLAGS) Scattering.f90
+
+kraken_mex.o: FatalError_mex.o KrakenMexInputMod.o KrakenMod.o BCImpedanceMod.o InverseIterationMod.o RootFinderBrent.o Scattering.o misc/libmisc.a kraken_mex.f90
+	$(FC) -c $(FFLAGS) kraken_mex.f90

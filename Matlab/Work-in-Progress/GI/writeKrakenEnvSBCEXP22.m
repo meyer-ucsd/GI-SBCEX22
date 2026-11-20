@@ -3,8 +3,17 @@
 % speed, density, and attenuation, and an acoustic halfspace. All frequencies
 % are computed in one broadband run. The upper phase-speed limit equals the
 % halfspace speed, so only trapped modes are computed.
+%
+% roughness (optional): rms roughness [m] of the sea surface (first entry) and
+% of the seafloor (second entry). KRAKEN adds the loss of the coherent field by
+% scattering at these interfaces to the attenuation of the modes (SIGMA of the
+% first and of the second medium). Without this input both are zero.
 
-function writeKrakenEnvSBCEXP22(envFile,freqs,waterDepth,sspDepths,sspSpeeds,sediment,halfspace,sourceDepths,receiverDepths)
+function writeKrakenEnvSBCEXP22(envFile,freqs,waterDepth,sspDepths,sspSpeeds,sediment,halfspace,sourceDepths,receiverDepths,roughness)
+
+if(nargin < 10)
+    roughness = [0;0];
+end
 
 fid = fopen(envFile,'w');
 if fid == -1
@@ -18,8 +27,8 @@ fprintf(fid,'%f\n',freqs(1));
 fprintf(fid,'%d\n',2);
 fprintf(fid,'%s\n','''CVF  B''');
 
-% medium 1: water column
-fprintf(fid,'%d %1.1f %8.3f\n',0,0.0,waterDepth);
+% medium 1: water column (with the roughness of the sea surface)
+fprintf(fid,'%d %5.3f %8.3f\n',0,roughness(1),waterDepth);
 for sspIndex = 1:numel(sspDepths)
     if sspIndex == 1
         fprintf(fid,'%8.3f %8.3f %4.1f %5.3f %4.1f %4.1f /\n',sspDepths(sspIndex),sspSpeeds(sspIndex),0.0,1.000,0.0,0.0);
@@ -28,9 +37,9 @@ for sspIndex = 1:numel(sspDepths)
     end
 end
 
-% medium 2: sediment layer with linear gradients between top and bottom
+% medium 2: sediment layer with linear gradients between top and bottom (with the roughness of the seafloor)
 sedimentBottomDepth = waterDepth + sediment.thickness;
-fprintf(fid,'%d %1.1f %8.3f\n',0,0.0,sedimentBottomDepth);
+fprintf(fid,'%d %5.3f %8.3f\n',0,roughness(2),sedimentBottomDepth);
 fprintf(fid,'%8.3f %8.3f %4.1f %5.3f %6.4f %4.1f /\n',waterDepth,sediment.speeds(1),0.0,sediment.densities(1),sediment.attenuations(1),0.0);
 fprintf(fid,'%8.3f %8.3f %4.1f %5.3f %6.4f %4.1f /\n',sedimentBottomDepth,sediment.speeds(2),0.0,sediment.densities(2),sediment.attenuations(2),0.0);
 

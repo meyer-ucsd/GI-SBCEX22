@@ -29,6 +29,20 @@ scenario.freqs = freqsTonesLF;
 scenario.hydrophoneHeights = 5.5 + 1.75 + 3.75*(0:15)';    % above the seafloor, hydrophone 1 first (trip report, Fig. B.3.3)
 scenario.likelihoodConstantSNR = nan;               % nan: unknown noise variance at each frequency, integrated out (evaluateLogLikelihood); a number is used as a fixed linear SNR factor (not dB)
 
+% propagation model (getModesSBCEXP22.m): 'kraken_env' (kraken.exe with an
+% environment file and a mode file), 'kraken_mex' (the same solver as a MEX
+% function without files, Matlab/KrakenMex), or 'orca'. The ORCA files are not
+% part of the repository; they are expected in Matlab/Orca/<platform> (see
+% getModesOrcaSBCEXP22.m, also for the other settings in scenario.orca). The
+% result files of a run with ORCA have Orca at the end of their names.
+scenario.model = 'kraken_mex';                       % default since 2026-11-19; 'kraken_env' gives the same field to 0.999999 and is about 1.4 times slower
+scenario.orca.numSSPPoints = 65;                    % points of the water profile passed to ORCA (KRAKEN uses scenario.numSSPPoints); the run time of ORCA is proportional to this number
+scenario.orca.cphmax = nan;                         % largest phase speed of the modes [m/s]; nan: speed of the halfspace, i.e., trapped modes only, as in the KRAKEN run; a larger value adds leaky modes
+resultsFile = 'resultsDataJoint';                   % the intermediate file has the same name with Tmp at the end
+if(strcmpi(scenario.model,'Orca'))
+    resultsFile = [resultsFile,'Orca'];
+end
+
 % data folders and MFP functions (sound speed casts and source track)
 dataFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','acoustic');
 processedFolder = fullfile(fileparts(mfilename('fullpath')),'..','..','Data','processed');
@@ -253,7 +267,7 @@ for currentIndex = 2:numSamples
     end
 
     if( mod(currentIndex,10000) == 0 && currentIndex ~= numSamples )
-        save('resultsDataJointTmp','samples','logLikelihoods','logPriors','proposalCovariances','proposalCovarianceHistory','covarianceHistoryInterval','isAccepted','swapIndexes','tempering','scenario','mcmc')
+        save([resultsFile,'Tmp'],'samples','logLikelihoods','logPriors','proposalCovariances','proposalCovarianceHistory','covarianceHistoryInterval','isAccepted','swapIndexes','tempering','scenario','mcmc')
     end
 
 end
@@ -261,4 +275,4 @@ toc
 
 [sensitivityY,sensitivityX] = getSensitivitySBCEXP22(scenario.prior,rmfield(scenario,'sourceRangeOffsets'),25);      % sensitivity for the reference window
 
-save('resultsDataJoint','samples','logLikelihoods','logPriors','proposalCovariances','proposalCovarianceHistory','covarianceHistoryInterval','isAccepted','swapIndexes','tempering','scenario','mcmc','sensitivityY','sensitivityX');
+save(resultsFile,'samples','logLikelihoods','logPriors','proposalCovariances','proposalCovarianceHistory','covarianceHistoryInterval','isAccepted','swapIndexes','tempering','scenario','mcmc','sensitivityY','sensitivityX');
